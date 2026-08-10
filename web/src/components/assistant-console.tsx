@@ -17,6 +17,8 @@ import { dispatch, type ActionCtx, type DoneInfo } from "@/app/actions/registry"
 import { scoreNum } from "@/lib/format";
 import { pendingActOpenerStart } from "@/lib/act-envelope.mjs";
 import { cn } from "@/lib/cn";
+import { resolveClientCliId } from "@/lib/client-cli";
+import { useRuntime } from "@/components/runtime-provider";
 
 // ── message model: messages are PART arrays so a live worker card can render
 // inline next to text, both fed by the single JobsProvider store ──────────────
@@ -28,7 +30,6 @@ type Part =
   | { type: "confirm"; cid: string; summary: string; state: "pending" | "done" | "cancelled" };
 type Msg = { role: "user" | "assistant"; parts: Part[] };
 
-const CONFIG_KEY = "career-ops:config";
 const CHAT_KEY = "career-ops:chat";
 // back-compat shims — the old directives still work, mapped onto the registry
 const NAV_RE = /<<\s*go:\s*(\/[a-z0-9/_-]*)\s*>>/gi;
@@ -145,6 +146,7 @@ export function AssistantConsole() {
   const { jobs, startJob } = useJobs();
   const pipeline = usePipeline();
   const apply = useApply();
+  const runtime = useRuntime();
 
   // refs so the streaming closure always sees the latest jobs/pipeline/apply/cli
   const jobsRef = useRef(jobs);
@@ -156,23 +158,20 @@ export function AssistantConsole() {
   const explore = useExplore();
   const exploreRef = useRef(explore);
   exploreRef.current = explore;
+  const localRef = useRef(runtime.local);
+  localRef.current = runtime.local;
   const handledRef = useRef<Set<string>>(new Set());
   const confirmRuns = useRef<Map<string, () => DoneInfo>>(new Map());
 
-  // selected CLI from Config (reacts to changes in other tabs)
+  // selected AI tool from Config, or server-pinned default
   useEffect(() => {
     function read() {
-      try {
-        const raw = localStorage.getItem(CONFIG_KEY);
-        setCliId(raw ? JSON.parse(raw).cliId || null : null);
-      } catch {
-        setCliId(null);
-      }
+      setCliId(resolveClientCliId(runtime.defaultCli));
     }
     read();
     window.addEventListener("storage", read);
     return () => window.removeEventListener("storage", read);
-  }, []);
+  }, [runtime.defaultCli]);
 
   // restore + persist conversation
   useEffect(() => {
@@ -269,6 +268,8 @@ export function AssistantConsole() {
       },
       setApplyField: (idOrLabel, value) => applyRef.current.setAnswer(idOrLabel, value),
       startApply: (u) => {
+        // Apply drives headed Chrome on the host — hide for remote friends.
+        if (!localRef.current) return;
         router.push("/apply");
         setTimeout(() => applyRef.current.open(u), 60);
       },
@@ -412,7 +413,7 @@ export function AssistantConsole() {
           }
         }
       }
-      if (!acc.trim()) setStreamText("_(no output — is the CLI authenticated?)_");
+      if (!acc.trim()) setStreamText("_(no output — is the AI tool signed in?)_");
     } catch {
       setStreamText("⚠️ Connection error.");
     } finally {
@@ -495,7 +496,7 @@ export function AssistantConsole() {
             <CoMark size={26} />
             <div className="flex-1">
               <div className="text-sm font-semibold tracking-tight">Assistant</div>
-              <div className="text-xs text-faint">{cliId ? `via ${cliId}` : "no CLI configured"}</div>
+              <div className="text-xs text-faint">{cliId ? "ready" : "no AI tool configured"}</div>
             </div>
             <Button variant="ghost" size="icon" onClick={resetChat} className="text-muted" aria-label="New chat" title="New chat">
               <RotateCcw className="size-4" />
@@ -556,7 +557,7 @@ export function AssistantConsole() {
               onClick={() => setOpen(false)}
               className="mx-4 mb-2 flex items-center gap-2 rounded-lg border border-border bg-surface/50 px-3 py-2 text-xs text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
             >
-              <Settings className="size-3.5" /> Pick a CLI in Config to enable the assistant →
+              <Settings className="size-3.5" /> Connect an AI tool in Config to enable the assistant →
             </Link>
           )}
 
@@ -571,7 +572,7 @@ export function AssistantConsole() {
                     send();
                   }
                 }}
-                placeholder={cliId ? "Ask anything…" : "Configure a CLI first"}
+                placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
                 rows={1}
                 disabled={!cliId}
                 className="max-h-32 flex-1 resize-none rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/50 disabled:opacity-50"

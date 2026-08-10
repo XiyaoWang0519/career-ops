@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+* **web:** Codex as a first-class streaming backend — per-kind sandbox args (`--json`, workspace-write / read-only, network), JSONL → UI event parser
+* **web:** optional password auth (`WEB_AUTH_PASSWORD` + signed cookie) via Next.js `proxy.ts` for remote exposure
+* **web:** server-pinned default AI tool (`CAREER_OPS_DEFAULT_CLI`), simple-mode nav (`CAREER_OPS_SIMPLE`), Activity in sidebar with persisted run logs
+* **web:** friend-ready hosting docs (Tailscale / tunnel + dedicated `CAREER_OPS_ROOT` checkout); hide Apply for remote clients
+
 ## [0.6.0](https://github.com/santifer/career-ops/compare/web-v0.5.0...web-v0.6.0) (2026-08-04)
 
 

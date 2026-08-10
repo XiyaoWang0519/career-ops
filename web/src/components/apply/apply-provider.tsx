@@ -38,8 +38,10 @@ export function useApply(): ApplyCtx {
 }
 
 const CONFIG_KEY = "career-ops:config";
-function cliId(): string | null {
+async function cliId(): Promise<string | null> {
   try {
+    const runtime = await fetch("/api/runtime").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (runtime?.defaultCli) return runtime.defaultCli as string;
     return JSON.parse(localStorage.getItem(CONFIG_KEY) || "{}").cliId || null;
   } catch {
     return null;
@@ -76,7 +78,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   const drive = useCallback(async (id: string) => {
     setDriveSteps([]);
     try {
-      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id, cliId: cliId(), goal: "reach" }) });
+      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id, cliId: await cliId(), goal: "reach" }) });
       if (!r.body) {
         setError("The agent couldn't start.");
         setStatus("error");
@@ -140,7 +142,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
     companyRef.current = opts?.company ?? "";
     pendingPrefill.current = false;
     try {
-      const r = await fetch("/api/apply/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: u, cliId: cliId() }) });
+      const r = await fetch("/api/apply/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: u, cliId: await cliId() }) });
       const d = await r.json();
       if (d.error) {
         setError(d.error);
@@ -168,8 +170,9 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
 
   const prefill = useCallback(async () => {
     if (!sessionId.current) return;
-    if (!cliId()) {
-      setError("Configure a CLI in Config first, then pre-fill from your CV.");
+    const id = await cliId();
+    if (!id) {
+      setError("Connect an AI tool in Config first, then pre-fill from your CV.");
       return;
     }
     setStatus("prefilling");
@@ -186,7 +189,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
       setMeta(m);
     };
     try {
-      const r = await fetch("/api/apply/prefill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: cliId() }) });
+      const r = await fetch("/api/apply/prefill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: id }) });
       if (!r.body) {
         setError("Couldn't pre-fill — no response stream.");
         setStatus("ready");
@@ -279,7 +282,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
       const okCount = (d.steps ?? []).filter((s: FillStep) => s.ok).length;
       const total = (d.steps ?? []).length;
       const mismatch = (d.issues ?? []).some((i: ApplyIssue) => i.code === "fill-mismatch");
-      if (cliId() && total > 0 && (okCount === 0 || (mismatch && okCount < total / 2))) {
+      if ((await cliId()) && total > 0 && (okCount === 0 || (mismatch && okCount < total / 2))) {
         await agentFillRef.current();
       }
     } catch {
@@ -300,7 +303,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
     setError("");
     setStatus("filling");
     try {
-      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: cliId(), goal: "full", answers: ans }) });
+      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: await cliId(), goal: "full", answers: ans }) });
       if (!r.body) {
         setError("The agent couldn't start filling.");
         setStatus("error");

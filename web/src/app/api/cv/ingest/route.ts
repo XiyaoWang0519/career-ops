@@ -2,8 +2,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveCli } from "@/lib/clis";
+import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot } from "@/lib/career-ops";
+import { codexTextDelta } from "@/lib/codex-stream.mjs";
 
 // Parse a CV (pasted text or an uploaded PDF) into clean cv.md markdown by running
 // the USER'S OWN CLI headless — the web never ships a heavyweight parser, and the
@@ -92,14 +93,15 @@ export async function POST(req: Request) {
     return Response.json({ error: "bad request" }, { status: 400 });
   }
 
-  const resolved = resolveCli(cliId);
+  const resolved = resolveCliOrDefault(cliId);
   if (!resolved) {
     if (tempFile) cleanupTemp(tempFile);
-    return Response.json({ error: `CLI '${cliId}' not found on this machine` }, { status: 404 });
+    return Response.json({ error: cliId ? `AI tool '${cliId}' not found on this machine` : "No AI tool configured" }, { status: 404 });
   }
-  const { spec, binPath } = resolved;
+  const { spec, binPath, id: resolvedCliId } = resolved;
   const prompt = ingestPrompt(promptSource);
-  const isClaude = cliId === "claude";
+  const isClaude = resolvedCliId === "claude";
+  const isCodex = resolvedCliId === "codex";
   const args = isClaude
     ? [
         "-p",
@@ -115,7 +117,7 @@ export async function POST(req: Request) {
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit,Task,WebFetch,WebSearch",
       ]
-    : spec.args(prompt);
+    : spec.args(prompt, "ingest");
 
   let child;
   try {
@@ -174,7 +176,7 @@ export async function POST(req: Request) {
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
-        if (!isClaude) {
+        if (!isClaude && !isCodex) {
           emit(d.toString());
           return;
         }
@@ -184,6 +186,11 @@ export async function POST(req: Request) {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
+          if (isCodex) {
+            const text = codexTextDelta(line);
+            if (text) emit(text);
+            continue;
+          }
           try {
             const obj = JSON.parse(line);
             if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { resolveCli } from "@/lib/clis";
+import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory, doctorState } from "@/lib/career-ops";
+import { codexTextDelta } from "@/lib/codex-stream.mjs";
 
 export const runtime = "nodejs"; // child_process (spawn) requires the Node runtime
 export const dynamic = "force-dynamic";
@@ -52,18 +53,18 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "bad json" }), { status: 400 });
   }
   const { message, cliId, pageContext } = body;
-  if (!message || !cliId) {
-    return new Response(JSON.stringify({ error: "message and cliId required" }), { status: 400 });
+  if (!message) {
+    return new Response(JSON.stringify({ error: "message required" }), { status: 400 });
   }
 
-  const resolved = resolveCli(cliId);
+  const resolved = resolveCliOrDefault(cliId);
   if (!resolved) {
-    return new Response(JSON.stringify({ error: `CLI '${cliId}' not found on this machine` }), {
+    return new Response(JSON.stringify({ error: cliId ? `AI tool '${cliId}' not found on this machine` : "No AI tool configured — set one in Config, or CAREER_OPS_DEFAULT_CLI on the server." }), {
       status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
-  const { spec, binPath } = resolved;
+  const { spec, binPath, id: resolvedCliId } = resolved;
 
   const history = (body.history ?? []).slice(-8);
   const convo = history.map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`).join("\n");
@@ -85,11 +86,13 @@ export async function POST(req: Request) {
   const prompt = `${SYSTEM_PREAMBLE}${setupLine}${memoryLine}${pageLine}\n\n--- Conversation ---\n${convo}\nUser: ${message}\nAssistant:`;
 
   // Claude Code streams token-level deltas via stream-json + partial messages.
+  // Codex streams JSONL (--json); we extract agent_message text.
   // Other CLIs: pass their stdout through raw.
-  // The chat CLI is READ-ONLY: all writes go through gated registry actions
-  // (remember → /api/memory, setStatus → /api/status), never the CLI editing
+  // The chat agent is READ-ONLY: all writes go through gated registry actions
+  // (remember → /api/memory, setStatus → /api/status), never the agent editing
   // files directly. Scope its tools so it can advise (read) but not blind-write.
-  const isClaude = cliId === "claude";
+  const isClaude = resolvedCliId === "claude";
+  const isCodex = resolvedCliId === "codex";
   // allowedTools must be COMMA-separated; disallowedTools is the hard guardrail
   // so the advisor can read (and WebFetch) but never blind-writes or shells out.
   const args = isClaude
@@ -107,7 +110,7 @@ export async function POST(req: Request) {
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit,Task",
       ]
-    : spec.args(prompt);
+    : spec.args(prompt, "assistant");
 
   const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env });
 
@@ -155,17 +158,22 @@ export async function POST(req: Request) {
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
-        if (!isClaude) {
+        if (!isClaude && !isCodex) {
           emit(d.toString());
           return;
         }
-        // line-buffered NDJSON → emit only assistant text deltas
+        // line-buffered NDJSON / Codex JSONL → emit only assistant text
         buf += d.toString();
         let nl: number;
         while ((nl = buf.indexOf("\n")) !== -1) {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
+          if (isCodex) {
+            const text = codexTextDelta(line);
+            if (text) emit(text);
+            continue;
+          }
           try {
             const obj = JSON.parse(line);
             if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
@@ -189,7 +197,7 @@ export async function POST(req: Request) {
       });
       child.on("close", () => {
         if (!emitted) {
-          safeEnqueue("_(no output — is the CLI authenticated?)_");
+          safeEnqueue("_(no output — is the AI tool signed in?)_");
         }
         safeClose();
       });

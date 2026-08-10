@@ -4,15 +4,23 @@ import { useRouter } from "next/navigation";
 import { Send, Lock } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
 import { useApply } from "@/components/apply/apply-provider";
+import { useRuntime } from "@/components/runtime-provider";
 
 // The "Apply" CTA — brand orange, paper-plane. Enabled ONLY when the tailored CV
 // for THIS offer is ready (the tracker's PDF column is ✅, or a pdf worker for
 // this #n just finished). On click it opens the apply form-proxy for the offer
 // (where the user reviews and submits it themselves — never auto-submit).
+//
+// Hidden for remote browsers: Apply drives a headed Chrome on the host machine,
+// which a friend accessing over Tailscale/tunnel cannot see or control.
 export function ApplyButton({ n, url, company, pdfReady }: { n: string; url?: string; company: string; pdfReady: boolean }) {
   const router = useRouter();
   const { jobs } = useJobs();
   const apply = useApply();
+  const { local, loaded } = useRuntime();
+
+  // Wait for runtime flags so we don't flash Apply for remote clients.
+  if (loaded && !local) return null;
 
   const pdfJobDone = jobs.some((j) => j.kind === "pdf" && j.input === n && j.status === "done");
   const hasUrl = !!url && /^https?:\/\//i.test(url);

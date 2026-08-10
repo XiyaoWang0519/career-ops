@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import type { Frame } from "playwright-core";
 import { resolveCli } from "@/lib/clis";
 import { careerOpsRoot } from "@/lib/career-ops";
+import { codexTextDelta } from "@/lib/codex-stream.mjs";
 import type { ApplyField } from "./extract";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +116,21 @@ export async function agentInterpretForm(frame: Frame, cliId: string, title: str
   const cands = await captureCandidates(frame).catch(() => [] as Cand[]);
   if (!cands.length) return [];
 
-  const out = await runPlanner(resolved.binPath, cliId === "claude", resolved.spec.args, buildPrompt(title, cands));
+  const raw = await runPlanner(
+    resolved.binPath,
+    cliId === "claude",
+    (p) => resolved.spec.args(p, "assistant"),
+    buildPrompt(title, cands),
+  );
+  // Codex --json → fold agent_message text; other CLIs pass stdout through.
+  const out =
+    cliId === "codex"
+      ? raw
+          .split("\n")
+          .map((line) => codexTextDelta(line))
+          .filter(Boolean)
+          .join("")
+      : raw;
   const m = out.match(/\[[\s\S]*\]/);
   if (!m) return [];
   let parsed: Interpreted[];

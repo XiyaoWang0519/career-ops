@@ -13,8 +13,10 @@ import { DEFAULT_FILTERS, filtersToParams } from "@/lib/explore";
 
 type Phase = "input" | "parsing" | "review" | "saving" | "error";
 
-function cliId(): string | null {
+async function cliId(): Promise<string | null> {
   try {
+    const runtime = await fetch("/api/runtime").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (runtime?.defaultCli) return runtime.defaultCli as string;
     return JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId || null;
   } catch {
     return null;
@@ -48,7 +50,7 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
     try {
       const r = await fetch("/api/cv/ingest", init);
       if (r.status === 404) {
-        setErr("Connect an AI CLI in Config first — it parses your CV locally.");
+        setErr("Connect an AI tool in Config first — it parses your CV locally.");
         setPhase("error");
         return;
       }
@@ -89,8 +91,8 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
     }
   }, []);
 
-  const ingestText = (text: string) => {
-    const id = cliId();
+  const ingestText = async (text: string) => {
+    const id = await cliId();
     if (!id) {
       setErr("needs-cli");
       setPhase("error");
@@ -99,28 +101,26 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
     void runStream({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, cliId: id }) });
   };
 
-  const ingestFile = (file: File) => {
-    // .md/.txt/.markdown fast path — plain text, NO CLI needed, instant.
+  const ingestFile = async (file: File) => {
+    // .md/.txt/.markdown fast path — plain text, NO AI tool needed, instant.
     if (/\.(md|markdown|txt)$/i.test(file.name)) {
-      file
-        .text()
-        .then((t) => {
-          if (!t.trim()) {
-            setErr("That file looks empty — paste your CV instead.");
-            setPhase("error");
-            return;
-          }
-          setMd(t.trim());
-          setPhase("review");
-        })
-        .catch(() => {
-          setErr("Couldn't read that file — paste your CV instead.");
+      try {
+        const t = await file.text();
+        if (!t.trim()) {
+          setErr("That file looks empty — paste your CV instead.");
           setPhase("error");
-        });
+          return;
+        }
+        setMd(t.trim());
+        setPhase("review");
+      } catch {
+        setErr("Couldn't read that file — paste your CV instead.");
+        setPhase("error");
+      }
       return;
     }
-    // PDF/other → the user's CLI parses it. Needs a configured CLI.
-    const id = cliId();
+    // PDF/other → the AI tool parses it locally.
+    const id = await cliId();
     if (!id) {
       setErr("needs-cli");
       setPhase("error");
@@ -220,9 +220,9 @@ export function CvIngest({ onSaved }: { onSaved?: () => void }) {
           (err === "needs-cli" ? (
             <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[13px] text-amber-700 dark:text-amber-300">
               <AlertTriangle className="size-3.5 shrink-0" />
-              <span>To read a PDF, connect your AI CLI — or paste your CV text above (no setup needed).</span>
+              <span>To read a PDF, connect your AI tool — or paste your CV text above (no setup needed).</span>
               <Link href="/config" className="ml-auto inline-flex items-center gap-1 rounded-md bg-amber-500/20 px-2.5 py-1 font-medium text-amber-700 transition hover:bg-amber-500/30 dark:text-amber-200">
-                Connect your AI CLI <ArrowRight className="size-3.5" />
+                Connect your AI tool <ArrowRight className="size-3.5" />
               </Link>
             </div>
           ) : (
