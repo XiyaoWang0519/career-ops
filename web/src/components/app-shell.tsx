@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { CoMark } from "@/components/co-mark";
-import { AssistantConsole } from "@/components/assistant-console";
+import { AssistantProvider } from "@/components/assistant/assistant-provider";
 import { MobileNav } from "@/components/mobile-nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { JobsProvider } from "@/components/jobs/job-store";
@@ -72,7 +72,6 @@ function ShellChrome({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
         <main className="flex-1 overflow-x-hidden">{children}</main>
-        <AssistantConsole />
         <FirstScoreView />
         <BetaBanner />
       </div>
@@ -94,7 +93,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <PipelineProvider>
           <ApplyProvider>
             <ExploreProvider>
-              <ShellChrome>{children}</ShellChrome>
+              <AssistantProvider>
+                <ShellChrome>{children}</ShellChrome>
+              </AssistantProvider>
             </ExploreProvider>
           </ApplyProvider>
         </PipelineProvider>
