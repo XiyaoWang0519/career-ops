@@ -4,19 +4,51 @@ import path from "node:path";
 
 // Server-only (node imports). The agnostic runtimes career-ops can delegate to
 // in headless mode (AGENTS.md). Install URLs from career-ops-docs.
+//
+// `kind` lets a CLI vary its flags per run type. Codex needs this: write kinds
+// (evaluate / pdf / fix-portal) require workspace-write + network so reports and
+// tracker rows can persist; research/assistant stay read-only.
 export type CliSpec = {
   id: string;
   name: string;
   bin: string;
   run: string;
   url: string;
-  /** headless invocation args for a single prompt */
-  args: (prompt: string) => string[];
+  /** headless invocation args for a single prompt; `kind` is optional for CLIs that ignore it */
+  args: (prompt: string, kind?: string) => string[];
 };
+
+/** Kinds that must write files under the career-ops checkout. */
+const WRITE_KINDS = new Set(["evaluate", "pdf", "fix-portal"]);
+
+function codexArgs(prompt: string, kind?: string): string[] {
+  const write = WRITE_KINDS.has(kind || "");
+  // --json → JSONL event stream the web parser understands.
+  // --skip-git-repo-check → CAREER_OPS_ROOT may be a data checkout without .git.
+  // -a never → headless; never block on interactive approval.
+  // -s workspace-write (write kinds) / read-only (research/assistant/…).
+  // -c network_access → WebFetch-style reads work inside the sandbox.
+  // Network via -c so WebFetch-style reads work in both sandboxes (write kinds
+  // also need it to pull the JD). Harmless if a Codex build ignores the key
+  // under read-only.
+  const args = [
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "-a",
+    "never",
+    "-s",
+    write ? "workspace-write" : "read-only",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    prompt,
+  ];
+  return args;
+}
 
 export const KNOWN: CliSpec[] = [
   { id: "claude", name: "Claude Code", bin: "claude", run: "claude -p", url: "https://claude.ai/code", args: (p) => ["-p", p] },
-  { id: "codex", name: "Codex", bin: "codex", run: "codex exec", url: "https://github.com/openai/codex", args: (p) => ["exec", p] },
+  { id: "codex", name: "Codex", bin: "codex", run: "codex exec --json", url: "https://github.com/openai/codex", args: codexArgs },
   { id: "gemini", name: "Gemini CLI", bin: "gemini", run: "gemini -p", url: "https://github.com/google-gemini/gemini-cli", args: (p) => ["-p", p] },
   { id: "opencode", name: "OpenCode", bin: "opencode", run: "opencode run", url: "https://opencode.ai", args: (p) => ["run", p] },
   { id: "copilot", name: "GitHub Copilot CLI", bin: "copilot", run: "copilot -p", url: "https://docs.github.com/en/copilot/github-copilot-in-the-cli", args: (p) => ["-p", p] },
@@ -82,6 +114,18 @@ export function findBin(bin: string, dirs = searchDirs()): string | null {
   return null;
 }
 
+/** Server-pinned default agent from CAREER_OPS_DEFAULT_CLI (e.g. "codex"). */
+export function pinnedDefaultCli(): string | null {
+  const id = process.env.CAREER_OPS_DEFAULT_CLI?.trim().toLowerCase() || "";
+  if (!id) return null;
+  return KNOWN.some((c) => c.id === id) ? id : null;
+}
+
+export function isSimpleMode(): boolean {
+  const v = (process.env.CAREER_OPS_SIMPLE || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 export function detectClis() {
   const dirs = searchDirs();
   return KNOWN.map((c) => {
@@ -96,4 +140,13 @@ export function resolveCli(id: string): { spec: CliSpec; binPath: string } | nul
   const binPath = findBin(spec.bin);
   if (!binPath) return null;
   return { spec, binPath };
+}
+
+/** Resolve an explicit id, or fall back to the server-pinned default. */
+export function resolveCliOrDefault(id?: string | null): { spec: CliSpec; binPath: string; id: string } | null {
+  const want = (id || pinnedDefaultCli() || "").trim();
+  if (!want) return null;
+  const resolved = resolveCli(want);
+  if (!resolved) return null;
+  return { ...resolved, id: want };
 }

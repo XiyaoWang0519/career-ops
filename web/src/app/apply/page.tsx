@@ -1,10 +1,30 @@
-import { Send } from "lucide-react";
+"use client";
+
+import { Send, MonitorOff } from "lucide-react";
 import { ApplyView } from "@/components/apply-view";
 import { ApplyBackdropMount } from "@/components/apply/apply-backdrop-mount";
-
-export const dynamic = "force-dynamic";
+import { useRuntime } from "@/components/runtime-provider";
+import Link from "next/link";
 
 export default function ApplyPage() {
+  const { local, loaded } = useRuntime();
+
+  if (loaded && !local) {
+    return (
+      <div className="mx-auto max-w-lg px-6 py-16 text-center">
+        <MonitorOff className="mx-auto size-8 text-muted" />
+        <h1 className="mt-4 font-display text-2xl tracking-tight text-landing">Apply works on this computer only</h1>
+        <p className="mt-2 text-sm text-muted">
+          Applying opens a browser window on the machine running career-ops — you can&apos;t see or control it from here.
+          Evaluate roles and generate CVs remotely; apply when you&apos;re at the host machine.
+        </p>
+        <Link href="/pipeline" className="mt-6 inline-block text-sm text-brand hover:underline">
+          Back to Pipeline
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="relative min-h-screen">
       {/* full-viewport blurred form wallpaper (behind everything) */}

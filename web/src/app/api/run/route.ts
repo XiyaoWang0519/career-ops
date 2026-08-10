@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveCli } from "@/lib/clis";
+import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory, findReportFile } from "@/lib/career-ops";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf } from "@/lib/pdf-render.mjs";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
+import { parseCodexLine } from "@/lib/codex-stream.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,17 +81,17 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "bad json" }), { status: 400 });
   }
   const { kind = "evaluate", input, cliId } = body;
-  if (!input || !cliId) {
-    return new Response(JSON.stringify({ error: "input and cliId required" }), { status: 400 });
+  if (!input) {
+    return new Response(JSON.stringify({ error: "input required" }), { status: 400 });
   }
-  const resolved = resolveCli(cliId);
+  const resolved = resolveCliOrDefault(cliId);
   if (!resolved) {
-    return new Response(JSON.stringify({ error: `CLI '${cliId}' not found` }), {
+    return new Response(JSON.stringify({ error: cliId ? `CLI '${cliId}' not found` : "No AI tool configured — set one in Config, or CAREER_OPS_DEFAULT_CLI on the server." }), {
       status: 404,
       headers: { "Content-Type": "application/json" },
     });
   }
-  const { spec, binPath } = resolved;
+  const { spec, binPath, id: resolvedCliId } = resolved;
 
   // These run the REAL core (modes/scripts), not just data — fail clearly if the
   // root is incomplete instead of faking it.
@@ -150,7 +151,8 @@ export async function POST(req: Request) {
 
   const prompt = buildPrompt({ kind, input, memory: readMemory(), today, pdfPaths });
 
-  const isClaude = cliId === "claude";
+  const isClaude = resolvedCliId === "claude";
+  const isCodex = resolvedCliId === "codex";
   // Tool scope by kind (comma-separated lists; disallowedTools is the hard
   // guardrail). 'evaluate'/'fix-portal' run the REAL mode + persist canonical
   // artifacts → they need Write + Bash (reserve-report-num / merge-tracker /
@@ -172,7 +174,7 @@ export async function POST(req: Request) {
        "--permission-mode", "acceptEdits",
        "--allowedTools", tools.allowed,
        "--disallowedTools", tools.disallowed]
-    : spec.args(prompt);
+    : spec.args(prompt, kind);
 
   // For write-needing kinds, snapshot reports/ so we can verify the worker
   // actually persisted (non-Claude CLIs lack Write auth and silently no-op).
@@ -246,7 +248,7 @@ export async function POST(req: Request) {
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
-        if (!isClaude) {
+        if (!isClaude && !isCodex) {
           emittedText = true;
           send({ type: "text", text: d.toString() });
           return;
@@ -257,6 +259,22 @@ export async function POST(req: Request) {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
+          if (isCodex) {
+            for (const ev of parseCodexLine(line)) {
+              if (ev.type === "tool") send({ type: "tool", name: ev.name });
+              else if (ev.type === "status") send({ type: "status", label: ev.label });
+              else if (ev.type === "text") {
+                emittedText = true;
+                send({ type: "text", text: ev.text });
+              } else if (ev.type === "error") {
+                sawError = true;
+                send({ type: "error", msg: ev.msg });
+              } else if (ev.type === "tokens") {
+                lastTokens = ev.tokens;
+              }
+            }
+            continue;
+          }
           try {
             const ev = JSON.parse(line);
             if (ev.type === "stream_event") {
@@ -343,8 +361,8 @@ export async function POST(req: Request) {
         // all is the same failure mode whether it was evaluating or tailoring
         // a PDF — one place for the condition/message pair instead of two.
         const noOutputError = (): string | null => {
-          if (!emittedText && !sawError && !cleanExit) return "The CLI exited with an error — is it installed and authenticated?";
-          if (!emittedText && !sawError) return "The CLI produced no output — is it installed and authenticated? (career-ops is best on Claude Code.)";
+          if (!emittedText && !sawError && !cleanExit) return "The AI tool exited with an error — is it installed and signed in?";
+          if (!emittedText && !sawError) return "The AI tool produced no output — is it installed and signed in?";
           return null;
         };
 
@@ -382,7 +400,7 @@ export async function POST(req: Request) {
         } else if (persists && !wroteReport) {
           // The worker ran but never wrote the report/tracker row (e.g. a CLI
           // without file-write authorization) — surface it instead of a fake score.
-          send({ type: "error", msg: "This evaluation didn't save a report, so it's not in your tracker. Full evaluation is verified on Claude Code." });
+          send({ type: "error", msg: "This evaluation didn't save a report, so it's not in your tracker. Re-run it (Codex and Claude Code both persist reports when signed in)." });
         } else if (!cleanExit || sawError) {
           // Produced output (maybe even a report) but did NOT finish cleanly — flag it
           // instead of recording a confident score off a half-finished run.

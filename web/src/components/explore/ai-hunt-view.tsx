@@ -51,7 +51,7 @@ export function AiHuntView({ cliName }: { cliName?: string }) {
 
         <div className="co-ailedger">
           <Sparkles className="size-3.5" />
-          {cliName || "your CLI"} · searching the open web
+          {cliName || "your AI"} · searching the open web
           {aiCost.searches > 0 && <span className="opacity-75">· {aiCost.searches} searches</span>}
           {matchCount > 0 && <span className="opacity-75">· {matchCount} found</span>}
         </div>

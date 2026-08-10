@@ -6,8 +6,10 @@ import { Sparkles, X, Settings } from "lucide-react";
 
 type Doctor = { available: boolean; onboardingNeeded: boolean; missing: string[]; warnings: string[] };
 
-function hasCli(): boolean {
+async function hasCli(): Promise<boolean> {
   try {
+    const runtime = await fetch("/api/runtime").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (runtime?.defaultCli) return true;
     return !!JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId;
   } catch {
     return false;
@@ -30,7 +32,7 @@ export function OnboardingBanner() {
   const [cli, setCli] = useState(true); // assume until read (avoid CTA flash)
 
   useEffect(() => {
-    setCli(hasCli());
+    void hasCli().then(setCli);
     fetch("/api/doctor")
       .then((r) => r.json())
       .then(setD)
@@ -65,13 +67,13 @@ export function OnboardingBanner() {
           <Sparkles className="size-4" /> Set me up with the assistant
         </button>
       ) : (
-        // The assistant needs a CLI to run — without one the kickoff would silently
+        // The assistant needs an AI tool — without one the kickoff would silently
         // drop. Send them to connect one first.
         <Link
           href="/config"
           className="mt-4 inline-flex items-center gap-2 rounded-full bg-brand px-4 py-2 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
         >
-          <Settings className="size-4" /> Connect your AI CLI to get started
+          <Settings className="size-4" /> Connect your AI tool to get started
         </Link>
       )}
     </div>

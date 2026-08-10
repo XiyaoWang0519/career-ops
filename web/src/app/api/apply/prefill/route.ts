@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveCli } from "@/lib/clis";
+import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory } from "@/lib/career-ops";
 import { getSession } from "@/lib/apply/session";
+import { codexTextDelta } from "@/lib/codex-stream.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,9 +121,9 @@ export async function POST(req: Request) {
 
       const s = sessionId ? getSession(sessionId) : undefined;
       if (!s) return fail("apply session not found (it may have expired)");
-      const resolved = cliId ? resolveCli(cliId) : null;
-      if (!resolved) return fail(`CLI '${cliId}' not found on this machine`);
-      const { spec, binPath } = resolved;
+      const resolved = resolveCliOrDefault(cliId);
+      if (!resolved) return fail(cliId ? `AI tool '${cliId}' not found on this machine` : "No AI tool configured");
+      const { spec, binPath, id: resolvedCliId } = resolved;
 
       const fieldsList = s.fields
         .map((f) => `${f.id}\t${f.type}${f.required ? "*" : ""}\t${f.label}${f.options ? `\t[options: ${f.options.join(" | ")}]` : ""}`)
@@ -142,15 +143,16 @@ For each field give the best answer:
 Output ONLY a compact JSON object mapping each field id → {"value": "...", "needs_confirmation": boolean}. No prose, no markdown, no code fence.`;
 
       log(`Form: "${s.title}" · ${s.fields.length} fields · prompt ${prompt.length} chars · memory ${mem.length} chars`);
-      log(`Planner: ${cliId} (${binPath})`);
+      log(`Planner: ${resolvedCliId} (${binPath})`);
 
-      const isClaude = cliId === "claude";
+      const isClaude = resolvedCliId === "claude";
+      const isCodex = resolvedCliId === "codex";
       // --strict-mcp-config with no --mcp-config = load ZERO MCP servers → much
       // faster startup (skips the user's global playwright/gmail/linear/… servers
       // the planner doesn't need; it only reads local files).
       const args = isClaude
         ? ["-p", prompt, "--permission-mode", "acceptEdits", "--strict-mcp-config", "--allowedTools", "Read,Glob,Grep", "--disallowedTools", "Bash,Write,Edit,NotebookEdit,Task,WebFetch,WebSearch"]
-        : spec.args(prompt);
+        : spec.args(prompt, "assistant");
       // Scale the timeout with form size (big forms = more drafting). Cap < maxDuration.
       const killMs = Math.min(300_000, 150_000 + s.fields.length * 6_000);
       log(`Spawning planner (timeout ${Math.round(killMs / 1000)}s)…`);
@@ -195,19 +197,28 @@ Output ONLY a compact JSON object mapping each field id → {"value": "...", "ne
         });
       });
 
-      log(`Planner exited code=${result.code} signal=${result.signal} · ${result.buf.length} chars total`);
-      log(`output head: ${result.buf.slice(0, 100).replace(/\s+/g, " ") || "(empty)"}`);
-      log(`output tail: ${result.buf.slice(-100).replace(/\s+/g, " ") || "(empty)"}`);
+      // Codex --json emits JSONL; fold agent_message text so extractJsonObject sees prose.
+      const plannerOut = isCodex
+        ? result.buf
+            .split("\n")
+            .map((line) => codexTextDelta(line))
+            .filter(Boolean)
+            .join("")
+        : result.buf;
 
-      if (!result.buf.trim()) {
-        return fail(result.signal ? "planner was killed before producing any output (try again / smaller form)" : "planner produced no output (check the CLI works in this folder)");
+      log(`Planner exited code=${result.code} signal=${result.signal} · ${plannerOut.length} chars total`);
+      log(`output head: ${plannerOut.slice(0, 100).replace(/\s+/g, " ") || "(empty)"}`);
+      log(`output tail: ${plannerOut.slice(-100).replace(/\s+/g, " ") || "(empty)"}`);
+
+      if (!plannerOut.trim()) {
+        return fail(result.signal ? "planner was killed before producing any output (try again / smaller form)" : "planner produced no output (check the AI tool works in this folder)");
       }
 
-      const { obj, truncated } = extractJsonObject(result.buf);
+      const { obj, truncated } = extractJsonObject(plannerOut);
       if (!obj) {
         return fail(
           result.signal ? "planner was killed mid-answer (form too large/slow) — couldn't recover any fields" : "couldn't parse the planner's answer as JSON",
-          result.buf.slice(-300),
+          plannerOut.slice(-300),
         );
       }
       const count = Object.keys(obj).length;

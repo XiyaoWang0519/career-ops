@@ -128,7 +128,7 @@ export function WorkerCard({
       )}
       {authError && (
         <div className={cn("mt-1 text-amber-700 dark:text-amber-400", inline ? "text-xs" : "text-[10px]")}>
-          Sign your CLI in from Config, then re-run.
+          Sign in to your AI tool, then re-run.
         </div>
       )}
       {tokens > 0 && (

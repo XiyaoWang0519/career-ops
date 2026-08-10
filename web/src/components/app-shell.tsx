@@ -15,16 +15,17 @@ import { FirstScoreView } from "@/components/explore/first-score-view";
 import { BetaBanner } from "@/components/beta/beta-banner";
 import { WorkerPills } from "@/components/jobs/worker-pills";
 import { UsageMeter } from "@/components/usage-meter";
+import { RuntimeProvider, useRuntime } from "@/components/runtime-provider";
 import { instrumentSerif } from "@/lib/fonts";
-import { NAV_ITEMS, isActivePath } from "@/lib/nav-items";
+import { visibleNavItems, isActivePath } from "@/lib/nav-items";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+function ShellChrome({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { simple } = useRuntime();
+  const items = visibleNavItems(simple);
+
   return (
-    <JobsProvider>
-      <PipelineProvider>
-      <ApplyProvider>
-      <ExploreProvider>
+    <>
       <MobileNav />
       <div className="flex min-h-screen">
         <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface/30 p-4 md:flex">
@@ -35,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           <nav className="flex flex-col gap-1">
-            {NAV_ITEMS.map(({ href, label, icon: Icon, chip }) => {
+            {items.map(({ href, label, icon: Icon, chip }) => {
               const active = isActivePath(href, pathname);
               return (
                 <Link
@@ -75,9 +76,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <FirstScoreView />
         <BetaBanner />
       </div>
-      </ExploreProvider>
-      </ApplyProvider>
-      </PipelineProvider>
-    </JobsProvider>
+    </>
+  );
+}
+
+export function AppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  // Login is a bare page — no sidebar, no assistant, no providers that hit APIs
+  // before the session cookie exists.
+  if (pathname === "/login") {
+    return <>{children}</>;
+  }
+
+  return (
+    <RuntimeProvider>
+      <JobsProvider>
+        <PipelineProvider>
+          <ApplyProvider>
+            <ExploreProvider>
+              <ShellChrome>{children}</ShellChrome>
+            </ExploreProvider>
+          </ApplyProvider>
+        </PipelineProvider>
+      </JobsProvider>
+    </RuntimeProvider>
   );
 }

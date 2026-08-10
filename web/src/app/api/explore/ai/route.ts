@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { resolveCli } from "@/lib/clis";
+import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory } from "@/lib/career-ops";
 import { assembleDedupContext } from "@/lib/core/discover";
+import { codexTextDelta } from "@/lib/codex-stream.mjs";
 
 // AI search orchestrates modes/discover.md by running the USER'S configured CLI
 // headless (CLI-agnostic, like the assistant). Web hunting is slow → generous
@@ -36,11 +37,16 @@ export async function POST(req: Request) {
   }
   const query = (body.query || "").trim();
   const cliId = body.cliId;
-  if (!query || !cliId) return Response.json({ error: "query and cliId required" }, { status: 400 });
+  if (!query) return Response.json({ error: "query required" }, { status: 400 });
 
-  const resolved = resolveCli(cliId);
-  if (!resolved) return Response.json({ error: `CLI '${cliId}' not found on this machine` }, { status: 404 });
-  const { spec, binPath } = resolved;
+  const resolved = resolveCliOrDefault(cliId);
+  if (!resolved) {
+    return Response.json(
+      { error: cliId ? `AI tool '${cliId}' not found on this machine` : "No AI tool configured" },
+      { status: 404 },
+    );
+  }
+  const { spec, binPath, id: resolvedCliId } = resolved;
 
   // Read the CANONICAL mode at request time — single source of truth, never a
   // homegrown prompt. Missing (older core) → graceful 400 so the Scan tab stays usable.
@@ -57,7 +63,8 @@ export async function POST(req: Request) {
   const knownBlock = lines.length ? `\n\n--- ALREADY KNOWN (dedup — do NOT propose these) ---\n${lines.join("\n")}` : "";
   const prompt = `${mode}${OUTPUT_CONTRACT}${memoryLine}${knownBlock}\n\n--- USER INTENT ---\n${query}\n`;
 
-  const isClaude = cliId === "claude";
+  const isClaude = resolvedCliId === "claude";
+  const isCodex = resolvedCliId === "codex";
   const args = isClaude
     ? [
         "-p",
@@ -73,7 +80,7 @@ export async function POST(req: Request) {
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit,Task", // proposer-not-writer, by construction
       ]
-    : spec.args(prompt);
+    : spec.args(prompt, "research");
 
   const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env });
 
@@ -121,7 +128,7 @@ export async function POST(req: Request) {
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
-        if (!isClaude) {
+        if (!isClaude && !isCodex) {
           emit(d.toString());
           return;
         }
@@ -131,6 +138,11 @@ export async function POST(req: Request) {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
+          if (isCodex) {
+            const text = codexTextDelta(line);
+            if (text) emit(text);
+            continue;
+          }
           try {
             const obj = JSON.parse(line);
             if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
@@ -153,7 +165,7 @@ export async function POST(req: Request) {
         safeClose();
       });
       child.on("close", () => {
-        if (!emitted) safeEnqueue("_(no output — is the CLI authenticated?)_");
+        if (!emitted) safeEnqueue("_(no output — is the AI tool signed in?)_");
         safeClose();
       });
     },

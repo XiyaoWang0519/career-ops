@@ -2,6 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { scoreTone } from "@/lib/format";
+import { resolveClientCliId } from "@/lib/client-cli";
+import { useRuntime } from "@/components/runtime-provider";
 
 export type JobStep = { kind: "tool" | "status"; label: string; ts: number };
 export type JobResult = { score: number | null; summary: string; tone: "good" | "warn" | "bad" | "muted" };
@@ -60,20 +62,53 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const seq = useRef(0);
   const loaded = useRef(false);
+  const { defaultCli } = useRuntime();
+  const defaultCliRef = useRef(defaultCli);
+  defaultCliRef.current = defaultCli;
 
-  // restore history
+  // restore history: merge localStorage with persisted server logs so Activity
+  // survives reloads / other browsers on the same host.
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(JOBS_KEY);
-      const arr = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(arr)) {
-        // anything left "running" from a previous session is stale → mark interrupted
-        setJobs(arr.map((j: Job) => (j.status === "running" ? { ...j, status: "error", steps: [...(j.steps || []), { kind: "status", label: "Interrupted (page reloaded)", ts: Date.now() }] } : j)));
+    let cancelled = false;
+    (async () => {
+      let local: Job[] = [];
+      try {
+        const raw = localStorage.getItem(JOBS_KEY);
+        const arr = raw ? JSON.parse(raw) : null;
+        if (Array.isArray(arr)) {
+          local = arr.map((j: Job) =>
+            j.status === "running"
+              ? { ...j, status: "error" as const, steps: [...(j.steps || []), { kind: "status" as const, label: "Interrupted (page reloaded)", ts: Date.now() }] }
+              : j,
+          );
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
-    }
-    loaded.current = true;
+
+      let persisted: Job[] = [];
+      try {
+        const res = await fetch("/api/runs");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.runs)) persisted = data.runs as Job[];
+        }
+      } catch {
+        /* offline / first load */
+      }
+      if (cancelled) return;
+
+      const byId = new Map<string, Job>();
+      for (const j of persisted) byId.set(j.id, j);
+      // Local (incl. in-flight / recent) wins over disk for the same id.
+      for (const j of local) byId.set(j.id, j);
+      const merged = [...byId.values()].sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0)).slice(0, 40);
+      setJobs(merged);
+      loaded.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // persist
@@ -92,13 +127,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
 
   const startJob = useCallback(
     (opts: StartOpts): string | null => {
-      let cliId: string | null = null;
-      try {
-        const raw = localStorage.getItem(CONFIG_KEY);
-        cliId = raw ? JSON.parse(raw).cliId || null : null;
-      } catch {
-        cliId = null;
-      }
+      const cliId = resolveClientCliId(defaultCliRef.current);
       const id = `job-${Date.now()}-${seq.current++}`;
       const job: Job = {
         id,
@@ -116,7 +145,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       setJobs((js) => [job, ...js]);
 
       if (!cliId) {
-        patch(id, (j) => ({ ...j, status: "error", endedAt: Date.now(), steps: [...j.steps, { kind: "status", label: "No CLI configured — open Config", ts: Date.now() }] }));
+        patch(id, (j) => ({ ...j, status: "error", endedAt: Date.now(), steps: [...j.steps, { kind: "status", label: "No AI tool configured — open Config", ts: Date.now() }] }));
         return id;
       }
 

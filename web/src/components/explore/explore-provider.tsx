@@ -391,7 +391,9 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     if (!intent) return;
     let cliId: string | null = null;
     try {
-      cliId = JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId || null;
+      // Prefer server-pinned default when present (CAREER_OPS_DEFAULT_CLI).
+      const runtime = await fetch("/api/runtime").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      cliId = runtime?.defaultCli || JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId || null;
     } catch {
       cliId = null;
     }
