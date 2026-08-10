@@ -38,12 +38,9 @@ export default function ChatPage() {
   const hasConversation = messages.some((message) =>
     message.parts.some((part) => part.type !== "text" || part.text.trim()),
   );
-  const last = messages[messages.length - 1];
-  const lastHasVisible = last?.parts.some((part) => (part.type === "text" && part.text.trim()) || part.type !== "text");
-  const showThinking = busy && !lastHasVisible;
 
   return (
-    <div className="flex min-h-[calc(100vh-1px)] flex-col bg-background">
+    <div className="flex h-[calc(100dvh-5rem)] min-h-0 flex-col bg-background md:h-screen">
       <header className="flex items-center justify-between border-b border-border px-5 py-4 sm:px-8">
         <div className="flex items-center gap-3">
           <CoMark size={30} />
@@ -104,12 +101,6 @@ export default function ChatPage() {
                   </div>
                 );
               })}
-              {showThinking && (
-                <div className="ml-10 flex items-center gap-2 text-xs text-muted">
-                  <ThinkingOrb state="solving" size={20} aria-label="Assistant is thinking" />
-                  Thinking…
-                </div>
-              )}
             </div>
           )}
         </div>
