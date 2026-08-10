@@ -225,6 +225,13 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (open && messages.length === 0) setMessages([{ role: "assistant", parts: [{ type: "text", text: GREETING }] }]);
   }, [open, messages.length]);
+
+  // Dock panel owns scrollRef; keep it pinned to the latest message while open.
+  // On /chat the dock is unmounted (ref is null) and the page scrolls itself.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
   // ── message mutators (operate on the last assistant message) ──
   function patchLastAssistant(ms: Msg[], fn: (m: Msg) => Msg): Msg[] {
     const copy = [...ms];
