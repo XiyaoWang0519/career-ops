@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -12,23 +12,24 @@ import { usePipeline } from "@/components/pipeline/pipeline-provider";
 import { useApply } from "@/components/apply/apply-provider";
 import { useExplore } from "@/components/explore/explore-provider";
 import { WorkerCard } from "@/components/jobs/worker-card";
-import { Button } from "@/components/ui/button";
 import { dispatch, type ActionCtx, type DoneInfo } from "@/app/actions/registry";
 import { scoreNum } from "@/lib/format";
 import { pendingActOpenerStart } from "@/lib/act-envelope.mjs";
 import { cn } from "@/lib/cn";
 import { resolveClientCliId } from "@/lib/client-cli";
 import { useRuntime } from "@/components/runtime-provider";
+import { Button } from "@/components/ui/button";
+import { ThinkingOrb } from "thinking-orbs";
 
 // ── message model: messages are PART arrays so a live worker card can render
 // inline next to text, both fed by the single JobsProvider store ──────────────
-type Part =
+export type Part =
   | { type: "text"; text: string }
   | { type: "note"; text: string }
   | { type: "card"; jobId: string }
   | { type: "batch"; batchId: string; jobIds: string[] }
   | { type: "confirm"; cid: string; summary: string; state: "pending" | "done" | "cancelled" };
-type Msg = { role: "user" | "assistant"; parts: Part[] };
+export type Msg = { role: "user" | "assistant"; parts: Part[] };
 
 const CHAT_KEY = "career-ops:chat";
 // back-compat shims — the old directives still work, mapped onto the registry
@@ -133,15 +134,41 @@ function msgText(m: Msg): string {
   return m.parts.filter((p): p is Extract<Part, { type: "text" }> => p.type === "text").map((p) => p.text).join(" ").trim();
 }
 
-export function AssistantConsole() {
+type Suggestion = { label: string; send: string };
+
+type AssistantContextValue = {
+  messages: Msg[];
+  input: string;
+  setInput: (input: string) => void;
+  busy: boolean;
+  cliId: string | null;
+  suggestions: Suggestion[];
+  send: (forced?: string) => void;
+  resetChat: () => void;
+  open: boolean;
+  openDock: () => void;
+  closeDock: () => void;
+  resolveConfirm: (cid: string, accept: boolean) => void;
+  jobs: ReturnType<typeof useJobs>["jobs"];
+};
+
+const AssistantContext = createContext<AssistantContextValue | null>(null);
+
+export function useAssistant() {
+  const context = useContext(AssistantContext);
+  if (!context) throw new Error("useAssistant must be used within <AssistantProvider>");
+  return context;
+}
+
+export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [cliId, setCliId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const pathname = usePathname();
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const { jobs, startJob } = useJobs();
   const pipeline = usePipeline();
@@ -198,10 +225,6 @@ export function AssistantConsole() {
   useEffect(() => {
     if (open && messages.length === 0) setMessages([{ role: "assistant", parts: [{ type: "text", text: GREETING }] }]);
   }, [open, messages.length]);
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages]);
-
   // ── message mutators (operate on the last assistant message) ──
   function patchLastAssistant(ms: Msg[], fn: (m: Msg) => Msg): Msg[] {
     const copy = [...ms];
@@ -477,8 +500,27 @@ export function AssistantConsole() {
     return chips.slice(0, 4);
   }, [pathname, pipeline.inbox, pipeline.applications]);
 
+  const value: AssistantContextValue = {
+    messages,
+    input,
+    setInput,
+    busy,
+    cliId,
+    suggestions,
+    send,
+    resetChat,
+    open,
+    openDock: () => setOpen(true),
+    closeDock: () => setOpen(false),
+    resolveConfirm,
+    jobs,
+  };
+
   return (
-    <>
+    <AssistantContext.Provider value={value}>
+      {children}
+      {pathname !== "/chat" && (
+        <>
       {!open && (
         <button
           onClick={() => setOpen(true)}
@@ -521,7 +563,10 @@ export function AssistantConsole() {
                     {m.role === "user" ? (
                       msgText(m)
                     ) : !hasVisible && busy && isLast ? (
-                      <Loader2 className="size-4 animate-spin text-muted" />
+                      <div className="flex items-center gap-2 text-xs text-muted">
+                        <ThinkingOrb state="solving" size={20} aria-label="Assistant is thinking" />
+                        Thinking…
+                      </div>
                     ) : (
                       <div className="space-y-2">
                         {m.parts.map((p, j) => (
@@ -589,12 +634,14 @@ export function AssistantConsole() {
           </div>
         </div>
       )}
-    </>
+        </>
+      )}
+    </AssistantContext.Provider>
   );
 }
 
 // ── part renderers ──
-function PartView({
+export function PartView({
   part,
   jobs,
   onConfirm,
@@ -602,7 +649,7 @@ function PartView({
   part: Part;
   jobs: ReturnType<typeof useJobs>["jobs"];
   onConfirm: (cid: string, accept: boolean) => void;
-  onOpen: () => void;
+  onOpen?: () => void;
 }) {
   if (part.type === "text") {
     if (!part.text.trim()) return null;
