@@ -92,13 +92,18 @@ export function WorkerCard({
   return (
     <div className={cn(inline && "rounded-xl border border-border bg-surface/60 p-2.5")}>
       <div className="flex items-center gap-2">
-        {job.status === "running" ? (
-          <ThinkingOrb state="working" size={20} aria-label="Worker is running" className="shrink-0" />
-        ) : job.status === "error" ? (
-          <AlertTriangle className={cn("size-3 shrink-0", tone.icon)} />
-        ) : (
-          <Check className={cn("size-3 shrink-0", tone.icon)} />
-        )}
+        <span className="t-icon-swap shrink-0" data-state={running ? "a" : "b"}>
+          <span className="t-icon" data-icon="a">
+            <ThinkingOrb state="working" size={20} aria-label="Worker is running" />
+          </span>
+          <span className="t-icon" data-icon="b" aria-hidden={running}>
+            {job.status === "error" ? (
+              <AlertTriangle className={cn("size-3", tone.icon)} />
+            ) : (
+              <Check className={cn("size-3", tone.icon)} />
+            )}
+          </span>
+        </span>
         <span className={cn("truncate font-medium", inline ? "text-sm" : "text-xs")}>{job.title}</span>
         {hasScore && (
           <span

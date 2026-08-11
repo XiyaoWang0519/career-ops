@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Pin, PinOff, X } from "lucide-react";
 import { localISODate, type CadenceEntry } from "@/lib/followups";
 import { cn } from "@/lib/cn";
+import { useTransitionClose } from "@/lib/use-transition-presence";
 
 /** Local today + N days, as YYYY-MM-DD. */
 function plusDays(n: number): string {
@@ -30,14 +31,15 @@ export function NextDateDialog({
   );
   const [busy, setBusy] = useState<"set" | "clear" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { close, phaseClass } = useTransitionClose(onClose);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [close]);
 
   const call = async (method: "POST" | "DELETE", body: Record<string, unknown>, kind: "set" | "clear") => {
     setBusy(kind);
@@ -55,7 +57,7 @@ export function NextDateDialog({
         return;
       }
       onChanged();
-      onClose();
+      close();
     } catch {
       setError("Could not update the pin.");
       setBusy(null);
@@ -69,14 +71,14 @@ export function NextDateDialog({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) close();
       }}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Pin next follow-up date for ${entry.company}`}
-        className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-xl"
+        className={cn("t-modal w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-xl", phaseClass)}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -85,7 +87,7 @@ export function NextDateDialog({
               {entry.company} · {entry.role} <span className="text-faint">(#{entry.num})</span>
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-faint transition hover:text-foreground">
+          <button type="button" onClick={close} aria-label="Close" className="rounded p-1 text-faint transition hover:text-foreground">
             <X className="size-4" />
           </button>
         </div>
@@ -132,7 +134,7 @@ export function NextDateDialog({
                 {busy === "clear" ? <Loader2 className="size-3.5 animate-spin" /> : <PinOff className="size-3.5" />} Clear pin
               </button>
             )}
-            <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-sm text-muted transition hover:text-foreground">
+            <button type="button" onClick={close} className="rounded-md px-3 py-2 text-sm text-muted transition hover:text-foreground">
               Cancel
             </button>
             <button

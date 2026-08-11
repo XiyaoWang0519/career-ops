@@ -28,6 +28,7 @@ export function ConfigForm() {
   const [clis, setClis] = useState<Cli[] | null>(null);
   const [cliId, setCliId] = useState<string>("");
   const [logos, setLogos] = useState(true);
+  const [logosInteracted, setLogosInteracted] = useState(false);
   const [saved, setSaved] = useState(false);
 
   // Load saved prefs
@@ -178,8 +179,17 @@ export function ConfigForm() {
       </label>
       <button
         type="button"
-        onClick={() => setLogos((v) => !v)}
-        className="flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-surface/50 px-4 py-3 text-left transition-colors hover:bg-surface-hover"
+        role="switch"
+        aria-checked={logos}
+        data-on={String(logos)}
+        onClick={() => {
+          setLogosInteracted(true);
+          setLogos((v) => !v);
+        }}
+        className={cn(
+          "t-toggle flex w-full items-center justify-between gap-4 rounded-xl border border-border bg-surface/50 px-4 py-3 text-left transition-colors hover:bg-surface-hover",
+          logosInteracted && "is-init",
+        )}
       >
         <span className="min-w-0">
           <span className="block text-sm font-medium text-foreground">Company logos</span>
@@ -195,10 +205,7 @@ export function ConfigForm() {
           )}
         >
           <span
-            className={cn(
-              "absolute top-0.5 size-5 rounded-full bg-white shadow transition-transform",
-              logos ? "translate-x-[1.375rem]" : "translate-x-0.5",
-            )}
+            className="t-toggle-thumb absolute left-0.5 top-0.5 size-5 rounded-full bg-white shadow"
           />
         </span>
       </button>

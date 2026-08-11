@@ -1,4 +1,4 @@
-import { getSession, finalizeDrivenSession, extractCurrent, isApplicationFormFn, handoffSession } from "@/lib/apply/session";
+import { getSession, finalizeDrivenSession, extractCurrent, isApplicationFormFn, handoffSession, setBrowserControl } from "@/lib/apply/session";
 import { driveSession } from "@/lib/apply/drive";
 import { classifyEmpty } from "@/lib/apply/diagnose";
 
@@ -19,6 +19,8 @@ export async function POST(req: Request) {
   const { sessionId, cliId = "", goal = "reach", answers } = body;
   const s = sessionId ? getSession(sessionId) : undefined;
   if (!s) return Response.json({ error: "apply session not found (it may have expired)" }, { status: 404 });
+  if (s.control === "user") return Response.json({ error: "The browser is under your control. Return it to the agent before continuing." }, { status: 409 });
+  setBrowserControl(s.id, "agent");
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -61,7 +63,8 @@ export async function POST(req: Request) {
         }
         // Didn't reach a real form → classify why for a clear message.
         const why = await classifyEmpty(page, s.url).catch(() => ({ message: "Couldn't reach a fillable form on this page." }));
-        emit({ t: "error", reason: result.reason, message: result.reason === "stuck" ? result.steps.at(-1)?.detail || why.message : why.message });
+        setBrowserControl(s.id, "user");
+        emit({ t: "needs_user", reason: result.reason, message: result.reason === "stuck" ? result.steps.at(-1)?.detail || why.message : why.message });
       } catch (e) {
         emit({ t: "error", message: e instanceof Error ? e.message.slice(0, 160) : "drive failed" });
       } finally {

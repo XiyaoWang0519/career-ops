@@ -34,6 +34,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     >
       <body className="font-sans antialiased">
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {process.env.NODE_ENV === "development" ? (
+          <script type="module" src="http://localhost:7331/inject.js" />
+        ) : null}
         <AppShell>{children}</AppShell>
       </body>
     </html>

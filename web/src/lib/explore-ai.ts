@@ -13,7 +13,16 @@ const CLOSE = ">>";
 export type AiTraceChunk =
   | { kind: "offer"; offer: DiscoveredOffer }
   | { kind: "narration"; text: string }
+  | { kind: "reasoning"; id: string; text: string }
+  | { kind: "tool"; id: string; name: string; family?: string; detail?: string }
   | { kind: "malformed"; raw: string };
+
+export type ExploreAiWireEvent =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; id: string; text: string }
+  | { type: "tool"; id: string; name: string; family?: string; detail?: string }
+  | { type: "error"; msg: string }
+  | { type: "done" };
 
 /** Normalize a URL for dedup: host+path, lowercased, no query/fragment/trailing slash. */
 export function canon(u: string): string {

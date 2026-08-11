@@ -5,6 +5,7 @@
   "description": "Official web experience for career-ops — local-first.",
   "scripts": {
     "dev": "next dev",
+    "refine": "REFINE_AGENT_CMD='codex exec --model gpt-5.6-sol -c model_reasoning_effort=\"high\" -c model_reasoning_summary=\"none\" --sandbox workspace-write --skip-git-repo-check -' npx transitions-refine live",
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",

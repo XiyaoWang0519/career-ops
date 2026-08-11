@@ -39,7 +39,10 @@ export function ThemeToggle({ className }: { className?: string }) {
       title={dark ? "Light mode" : "Dark mode"}
       className={cn("text-muted", className)}
     >
-      {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      <span className="t-icon-swap" data-state={dark ? "a" : "b"} aria-hidden>
+        <Sun className="t-icon size-4" data-icon="a" />
+        <Moon className="t-icon size-4" data-icon="b" />
+      </span>
     </Button>
   );
 }

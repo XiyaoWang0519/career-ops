@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { instrumentSerif } from "@/lib/fonts";
 import { parseReport, scoreTone, legitimacyTone } from "@/lib/format";
 import { useJobs, type Job } from "@/components/jobs/job-store";
+import { useTransitionPresence } from "@/lib/use-transition-presence";
 
 const SEEN_KEY = "career-ops:first-score-seen";
 
@@ -14,12 +15,10 @@ const SEEN_KEY = "career-ops:first-score-seen";
 // north star: the WHY is the hero (a sentence that clearly read THIS CV and reasoned
 // about THIS job), the grade is large-but-secondary. A celebration, not a report.
 const STYLE = `
-.co-aha{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:1.2rem;background:color-mix(in srgb, var(--bg) 70%, rgba(0,0,0,.5));-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);animation:co-aha-in .35s ease both}
+.co-aha{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:1.2rem;background:color-mix(in srgb, var(--bg) 70%, rgba(0,0,0,.5));-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .co-aha__card{position:relative;width:min(34rem,100%);border-radius:1.3rem;border:1px solid var(--border,hsl(0 0% 50% /.2));background:var(--bg);box-shadow:0 24px 70px -20px rgba(0,0,0,.5);overflow:hidden}
 .co-aha__glow{position:absolute;inset:0;background:radial-gradient(80% 60% at 50% -10%, hsl(26 82% 55% /.22), transparent 70%);pointer-events:none}
 .co-aha__grade{font-variant-numeric:tabular-nums;line-height:1}
-@keyframes co-aha-in{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
-@media(prefers-reduced-motion:reduce){.co-aha{animation:none}}
 `;
 
 /** Pull the strongest "why this person" line out of the worker output. Prefer the
@@ -58,6 +57,7 @@ export function FirstScoreView() {
   // close, restore focus on close (mirrors the MobileNav pattern).
   const panelRef = useRef<HTMLDivElement>(null);
   const open = !seen && !dismissed && !!firstDone;
+  const modal = useTransitionPresence(open);
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
@@ -94,7 +94,7 @@ export function FirstScoreView() {
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!modal.mounted || !firstDone) return null;
 
   const why = extractWhy(firstDone);
   const score = firstDone.result?.score ?? null;
@@ -116,7 +116,7 @@ export function FirstScoreView() {
   return (
     <div className="co-aha" role="dialog" aria-modal="true" aria-label="Your first score" onClick={close}>
       <style>{STYLE}</style>
-      <div ref={panelRef} className="co-aha__card" onClick={(e) => e.stopPropagation()}>
+      <div ref={panelRef} className={cn("t-modal co-aha__card", modal.phaseClass)} onClick={(e) => e.stopPropagation()}>
         <div className="co-aha__glow" />
         <button onClick={close} aria-label="Close" className="absolute right-3 top-3 z-10 rounded-md p-1.5 text-faint transition hover:text-foreground">
           <X className="size-4" />

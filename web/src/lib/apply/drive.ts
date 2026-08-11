@@ -114,6 +114,9 @@ export async function driveSession(
   budget = 10,
   answers?: { label: string; value: string }[],
 ): Promise<DriveResult> {
+  if (goal === "reach" && (await isFormReady().catch(() => false))) {
+    return { reached: true, turns: 0, reason: "form-reached", steps: [] };
+  }
   const resolved = resolveCli(cliId);
   const steps: DriveStep[] = [];
   if (!resolved || cliId !== "claude") {

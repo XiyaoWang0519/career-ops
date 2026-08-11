@@ -48,12 +48,24 @@ export function ExplorerView({
   const [firstRun, setFirstRun] = useState(false);
 
   useEffect(() => {
-    try {
-      const id = JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId || null;
-      setCli({ id, name: id ? CLI_NAMES[id] || id : undefined });
-    } catch {
-      setCli({ id: null });
-    }
+    let cancelled = false;
+    void fetch("/api/runtime")
+      .then((response) => (response.ok ? response.json() : null))
+      .catch(() => null)
+      .then((runtime) => {
+        if (cancelled) return;
+        let localId: string | null = null;
+        try {
+          localId = JSON.parse(localStorage.getItem("career-ops:config") || "{}").cliId || null;
+        } catch {
+          /* malformed browser preference — server default can still recover */
+        }
+        const id = runtime?.defaultCli || localId;
+        setCli({ id, name: id ? CLI_NAMES[id] || id : undefined });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Initialize once from the URL (shareable search) or the server seed — without
@@ -166,17 +178,17 @@ export function ExplorerView({
       ) : (
         <>
           {isResults ? (
-            <div className="mb-6 rounded-xl border border-border bg-surface/30">
-              <button type="button" onClick={() => setRefineOpen((v) => !v)} className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-foreground">
+            <div className="t-acc mb-6 rounded-xl border border-border bg-surface/30" data-open={String(refineOpen)}>
+              <button type="button" onClick={() => setRefineOpen((v) => !v)} className="t-acc-head flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-foreground" aria-expanded={refineOpen}>
                 <Compass className="size-4 text-brand" /> Refine search
-                <ChevronDown className={cn("ml-auto size-4 text-muted transition-transform", refineOpen && "rotate-180")} />
+                <span className="t-acc-chevron ml-auto"><ChevronDown className="size-4 text-muted" /></span>
               </button>
-              {refineOpen && (
-                <div className="space-y-4 border-t border-border p-4">
+              <div className="t-acc-panel">
+                <div className="t-acc-panel-inner space-y-4 border-t border-border p-4">
                   <FilterBuilder filters={filters} onChange={setFilters} seededFrom={seed.seededFrom} />
                   <DiscoverBar canDiscover={canDiscover} onDiscover={discover} label="Re-cast (free)" />
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className="mb-6 rounded-2xl border border-border bg-surface/30 p-5">

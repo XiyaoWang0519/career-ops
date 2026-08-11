@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check } from "lucide-react";
 import { CANONICAL_STATES } from "@/lib/format";
 
 // Status writeback control. Updates the existing tracker row (status cell) via
@@ -54,8 +53,13 @@ export function StatusSelect({ n, current }: { n: string; current: string }) {
         ))}
       </select>
       {saved && (
-        <span className="animate-terminal-popup inline-flex items-center gap-1 text-xs font-medium text-brand">
-          <Check className="size-3" /> saved
+        <span className="inline-flex items-center gap-1 text-xs font-medium text-brand">
+          <span className="t-success-check" data-state="in" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" className="size-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 12l4 4L19 6" style={{ strokeDasharray: 21, strokeDashoffset: 21 }} />
+            </svg>
+          </span>
+          saved
         </span>
       )}
     </span>

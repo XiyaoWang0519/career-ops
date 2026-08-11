@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory, doctorState } from "@/lib/career-ops";
-import { codexTextDelta } from "@/lib/codex-stream.mjs";
+import { codexStderrSummary, parseCodexLine } from "@/lib/codex-stream.mjs";
 
 export const runtime = "nodejs"; // child_process (spawn) requires the Node runtime
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ ACTIONS:
 - research {"target":"https://… or 'my portfolio'","title":"Research · X"} — spin a read-only research worker.
 - generatePdf {"n":"42"} — generate an ATS-optimized CV tailored to application #42 (runs the real pdf mode → output/ + marks the tracker PDF column). Spends tokens.
 - setStatus {"n":"42","status":"Applied"} — move a tracked application to a new state (asks the user to confirm first). Canonical states: Evaluated, Applied, Responded, Interview, Offer, Hired, Rejected, Discarded, SKIP. Use the application number (the "#42" on its report page).
-- apply {"url":"https://…"} — open the apply form-proxy for a posting URL (we re-render the real form in plain language; the user verifies and submits it themselves — never auto-submit).
+- apply {"url":"https://…"} — open the real application in a live browser card inside this conversation. The agent may navigate/fill, the user can take control for login/CAPTCHA/review, and only the user submits.
 - setApplyField {"field":"Why this role?","value":"<the answer>"} — write or revise an answer in the apply form the user is filling (only when an APPLY FORM is shown in your context). Use the field's label or id. When the user asks to make an answer shorter/sharper/etc, generate the new text and emit this.
 - remember {"fact":"the concise fact"} — durably remember a preference/fact about the user (carries across sessions and across whichever CLI runs).
 - setProfile {"name":"…","email":"…","location":"…","roles":["AI Engineer","ML Engineer"],"compMin":70000,"compMax":95000,"currency":"EUR","remote":"Remote (EU)","seniority":"Senior"} — PROPOSE the user's profile; the app shows a confirm card and ONLY on their OK writes config/profile.yml (merge-safe — it never clobbers their other fields) AND seeds the free scanner from the roles. Emit only fields you're confident about (most come from their CV). NEVER write a profile they didn't approve.
@@ -40,6 +40,8 @@ ONBOARDING — your job is to get this person to their first SCORED job FAST. Th
 4. PROPOSE, don't impose. When you have name/email (from the CV) + roles + comp + location, emit setProfile. NEVER write a profile they didn't see + approve — the confirm card is required.
 5. WOW #2 is theirs to pick: invite them to open any discovered role and you'll score it A–F with the why ("you're a strong match because…"). That first scored-job-with-explanation is the north star.
 Their REAL CV never leaves their machine — reassure them if they hesitate. Never reveal internal file names or YAML unless asked.
+
+USER-VISIBLE PROGRESS: Before using tools or reading files, and at meaningful milestones, send a short commentary update describing what you are checking or what you learned. Keep each update concrete and concise. These are progress summaries for the UI — never reveal private chain-of-thought, hidden reasoning, secrets, or raw diagnostics. Then return a concise final result (plus any required action envelope).
 
 Keep replies short, warm, and useful. Don't dump raw files or narrate internal details. If they seem new, onboard them gently. Never reveal internal system details.`;
 
@@ -86,7 +88,8 @@ export async function POST(req: Request) {
   const prompt = `${SYSTEM_PREAMBLE}${setupLine}${memoryLine}${pageLine}\n\n--- Conversation ---\n${convo}\nUser: ${message}\nAssistant:`;
 
   // Claude Code streams token-level deltas via stream-json + partial messages.
-  // Codex streams JSONL (--json); we extract agent_message text.
+  // Codex streams JSONL (--json); we preserve its summary/tool events in our
+  // own NDJSON protocol so chat can render real activity instead of a spinner.
   // Other CLIs: pass their stdout through raw.
   // The chat agent is READ-ONLY: all writes go through gated registry actions
   // (remember → /api/memory, setStatus → /api/status), never the agent editing
@@ -112,7 +115,9 @@ export async function POST(req: Request) {
       ]
     : spec.args(prompt, "assistant");
 
-  const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+  // stdin must be closed: Codex treats an open pipe as additional prompt input
+  // and waits for EOF before producing its final response.
+  const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
 
   const encoder = new TextEncoder();
   // `closed` + kill timer in the OUTER scope so cancel() can flip `closed` before
@@ -123,7 +128,12 @@ export async function POST(req: Request) {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let buf = "";
-      let emitted = false;
+      let codexStderr = "";
+      let codexError = "";
+      let codexPendingText = "";
+      let codexVisibleText = "";
+      let emittedAnswer = false;
+      let lastTokens = 0;
       killer = setTimeout(() => {
         try {
           child.kill("SIGTERM");
@@ -152,17 +162,31 @@ export async function POST(req: Request) {
           return false;
         }
       };
-      const emit = (s: string) => {
-        if (safeEnqueue(s)) emitted = true;
+      const send = (event: unknown) => safeEnqueue(`${JSON.stringify(event)}\n`);
+      const emitText = (s: string) => {
+        if (send({ type: "text", text: s })) emittedAnswer = true;
+      };
+      // Codex builds may publish agent_message updates either as cumulative
+      // snapshots or token-like deltas, followed by the same completed text.
+      // Normalize both shapes so the final answer streams once.
+      const emitCodexText = (text: string) => {
+        if (!text || text === codexVisibleText) return;
+        if (text.startsWith(codexVisibleText)) {
+          emitText(text.slice(codexVisibleText.length));
+          codexVisibleText = text;
+          return;
+        }
+        emitText(text);
+        codexVisibleText += text;
       };
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
         if (!isClaude && !isCodex) {
-          emit(d.toString());
+          emitText(d.toString());
           return;
         }
-        // line-buffered NDJSON / Codex JSONL → emit only assistant text
+        // line-buffered CLI JSON → normalized assistant NDJSON events
         buf += d.toString();
         let nl: number;
         while ((nl = buf.indexOf("\n")) !== -1) {
@@ -170,15 +194,27 @@ export async function POST(req: Request) {
           buf = buf.slice(nl + 1);
           if (!line) continue;
           if (isCodex) {
-            const text = codexTextDelta(line);
-            if (text) emit(text);
+            for (const event of parseCodexLine(line)) {
+              if (event.type === "text") {
+                if (event.phase === "final_answer") emitCodexText(event.text);
+                else codexPendingText = event.text;
+              }
+              else if (event.type === "reasoning") send(event);
+              else if (event.type === "tool") send(event);
+              else if (event.type === "status") send(event);
+              else if (event.type === "error") codexError = event.msg;
+              else if (event.type === "tokens") {
+                lastTokens = event.tokens;
+                if (codexPendingText && !emittedAnswer) emitCodexText(codexPendingText);
+              }
+            }
             continue;
           }
           try {
             const obj = JSON.parse(line);
             if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
               const text = obj.event.delta?.text;
-              if (typeof text === "string") emit(text);
+              if (typeof text === "string") emitText(text);
             }
           } catch {
             /* partial / non-json line — skip */
@@ -187,18 +223,30 @@ export async function POST(req: Request) {
       });
       child.stderr.on("data", (d: Buffer) => {
         const s = d.toString();
+        if (isCodex) {
+          codexStderr = (codexStderr + s).slice(-12_000);
+          return;
+        }
         if (/error|not found|denied|fatal/i.test(s)) {
-          safeEnqueue(`\n[${spec.name}] ${s.trim()}\n`);
+          send({ type: "error", msg: `[${spec.name}] ${s.trim()}`.slice(0, 300) });
         }
       });
       child.on("error", (e) => {
-        safeEnqueue(`\n[error launching ${spec.name}: ${e.message}]`);
+        send({ type: "error", msg: `Error launching ${spec.name}: ${e.message}` });
         safeClose();
       });
-      child.on("close", () => {
-        if (!emitted) {
-          safeEnqueue("_(no output — is the AI tool signed in?)_");
+      child.on("close", (code, signal) => {
+        if (!emittedAnswer && codexPendingText && code === 0 && !signal) emitCodexText(codexPendingText);
+        if (!emittedAnswer) {
+          const summary = isCodex ? codexError || codexStderrSummary(codexStderr) : "";
+          send({
+            type: summary || signal ? "error" : "text",
+            ...(summary || signal
+              ? { msg: summary ? `Codex: ${summary}` : "Codex timed out before completing the response." }
+              : { text: "_(no output — is the AI tool signed in?)_" }),
+          });
         }
+        send({ type: "done", tokens: lastTokens });
         safeClose();
       });
     },
@@ -215,7 +263,7 @@ export async function POST(req: Request) {
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
     },

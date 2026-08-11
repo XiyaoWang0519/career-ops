@@ -179,18 +179,20 @@ export function FilterBuilder({
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setAdvanced((v) => !v)}
-        className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-foreground transition-colors max-sm:min-h-[44px]"
-      >
-        <SlidersHorizontal className="size-3.5" />
-        Location &amp; scope
-        <ChevronDown className={cn("size-3.5 transition-transform", advanced && "rotate-180")} />
-      </button>
+      <div className="t-acc" data-open={String(advanced)}>
+        <button
+          type="button"
+          onClick={() => setAdvanced((v) => !v)}
+          className="t-acc-head inline-flex items-center gap-1.5 text-[12px] text-muted transition-colors hover:text-foreground max-sm:min-h-[44px]"
+          aria-expanded={advanced}
+        >
+          <SlidersHorizontal className="size-3.5" />
+          Location &amp; scope
+          <span className="t-acc-chevron"><ChevronDown className="size-3.5" /></span>
+        </button>
 
-      {advanced && (
-        <div className="space-y-3 rounded-xl border border-border bg-surface/30 p-3">
+        <div className="t-acc-panel">
+          <div className="t-acc-panel-inner mt-1 space-y-3 rounded-xl border border-border bg-surface/30 p-3">
           <div className="flex items-center gap-1.5 text-[12px] text-muted">
             <MapPin className="size-3.5" /> Location
           </div>
@@ -220,8 +222,9 @@ export function FilterBuilder({
               className="w-full accent-brand"
             />
           </div>
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

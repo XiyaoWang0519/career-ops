@@ -21,28 +21,34 @@ export type CliSpec = {
 /** Kinds that must write files under the career-ops checkout. */
 const WRITE_KINDS = new Set(["evaluate", "pdf", "fix-portal"]);
 
-function codexArgs(prompt: string, kind?: string): string[] {
+export function codexArgs(prompt: string, kind?: string): string[] {
   const write = WRITE_KINDS.has(kind || "");
+  // Codex 0.146+ parses approval policy as a GLOBAL option, so it must precede
+  // the `exec` subcommand. `codex exec -a never …` is rejected by clap.
+  // -a never → headless; never block on an interactive approval.
   // --json → JSONL event stream the web parser understands.
   // --skip-git-repo-check → CAREER_OPS_ROOT may be a data checkout without .git.
-  // -a never → headless; never block on interactive approval.
   // -s workspace-write (write kinds) / read-only (research/assistant/…).
   // -c network_access → WebFetch-style reads work inside the sandbox.
   // Network via -c so WebFetch-style reads work in both sandboxes (write kinds
   // also need it to pull the JD). Harmless if a Codex build ignores the key
   // under read-only.
   const args = [
+    "-a",
+    "never",
     "exec",
     "--json",
     "--skip-git-repo-check",
-    "-a",
-    "never",
     "-s",
     write ? "workspace-write" : "read-only",
     "-c",
     "sandbox_workspace_write.network_access=true",
-    prompt,
   ];
+  // The assistant chat renders Codex's concise reasoning summaries as live
+  // progress. Force summaries on for this surface even if a user's global
+  // config hides them; raw reasoning is never requested or exposed.
+  if (kind === "assistant" || kind === "research") args.push("-c", 'model_reasoning_summary="auto"');
+  args.push(prompt);
   return args;
 }
 

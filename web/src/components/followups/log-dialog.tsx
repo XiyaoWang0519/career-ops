@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2, X } from "lucide-react";
 import { CHANNELS, localISODate, type CadenceEntry, type Channel } from "@/lib/followups";
 import { cn } from "@/lib/cn";
+import { useTransitionClose } from "@/lib/use-transition-presence";
 
 // "Log" — the full-fidelity FollowUp entry (date, channel enum, contact,
 // notes). Appends one table row via /api/followups/log.
@@ -24,14 +25,15 @@ export function LogDialog({
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { close, phaseClass } = useTransitionClose(onClose);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [close]);
 
   // Keep free text single-line and pipe-free BEFORE it leaves the client
   // (the API's cell() normalizes again server-side — defense in depth): the
@@ -64,7 +66,7 @@ export function LogDialog({
         return;
       }
       onLogged();
-      onClose();
+      close();
     } catch {
       setError("Could not log the follow-up.");
       setSaving(false);
@@ -78,14 +80,14 @@ export function LogDialog({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) close();
       }}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={`Log follow-up for ${entry.company}`}
-        className="w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl"
+        className={cn("t-modal w-full max-w-md rounded-2xl border border-border bg-surface p-5 shadow-xl", phaseClass)}
       >
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -94,7 +96,7 @@ export function LogDialog({
               {entry.company} · {entry.role} <span className="text-faint">(#{entry.num})</span>
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="rounded p-1 text-faint transition hover:text-foreground">
+          <button type="button" onClick={close} aria-label="Close" className="rounded p-1 text-faint transition hover:text-foreground">
             <X className="size-4" />
           </button>
         </div>
@@ -147,7 +149,7 @@ export function LogDialog({
           </label>
           {error && <p className="text-xs text-red-500">{error}</p>}
           <div className="flex justify-end gap-2 pt-1">
-            <button type="button" onClick={onClose} className="rounded-md px-3 py-2 text-sm text-muted transition hover:text-foreground">
+            <button type="button" onClick={close} className="rounded-md px-3 py-2 text-sm text-muted transition hover:text-foreground">
               Cancel
             </button>
             <button

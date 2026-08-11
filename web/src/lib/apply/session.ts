@@ -54,6 +54,8 @@ function looksLikeApplicationForm(form: ExtractedForm): boolean {
   const hasFile = fs.some((f) => f.type === "file");
   const hasEmail = fs.some((f) => f.type === "email" || /e-?mail/.test(lab(f)));
   const hasAppish = fs.some((f) => /first name|last name|full name|resume|résumé|\bcv\b|cover letter|phone|linkedin|github|why |portfolio|sponsorship|relocat/.test(lab(f)));
+  const hasPassword = fs.some((f) => /password|passcode/.test(`${lab(f)} ${(f.nativeId || "").toLowerCase()} ${(f.nativeName || "").toLowerCase()}`));
+  if (hasPassword && !hasFile && !hasAppish) return false; // account/login form, not an application
   if (hasFile || hasEmail || hasAppish) return true; // clearly an application
   const allSearch = fs.every(
     (f) => /search|buscar|filtr|keyword|palabra|department|departa|office|oficina|location|ubicaci|remote|category|categor/.test(lab(f)) || /filter|search|keyword/.test((f.nativeId || "").toLowerCase()),
@@ -110,7 +112,23 @@ async function enrichFromAts(url: string, fields: ApplyField[]): Promise<void> {
 // so we can: extract → (user verifies pre-filled answers) → FILL the real form →
 // bringToFront() for the human to submit it themselves. Headed (channel:chrome) =
 // the user's own Chrome on their residential IP (best ATS success); never submits.
-type Session = { id: string; url: string; title: string; fields: ApplyField[]; context: BrowserContext; page: Page; frame: Frame; createdAt: number; formShot?: string };
+export type BrowserControl = "agent" | "user" | "review";
+type Session = {
+  id: string;
+  url: string;
+  title: string;
+  fields: ApplyField[];
+  context: BrowserContext;
+  page: Page;
+  frame: Frame;
+  createdAt: number;
+  lastActivityAt: number;
+  control: BrowserControl;
+  formShot?: string;
+};
+
+const BROWSER_VIEWPORT = { width: 1280, height: 900 } as const;
+const HUMAN_RECOVERABLE_BLOCKS = new Set(["auth-required", "bot-block", "login-wall", "bot-challenge", "workday"]);
 
 declare global {
   // eslint-disable-next-line no-var
@@ -126,17 +144,19 @@ async function headedBrowser(): Promise<Browser> {
   const b = globalThis.__coHeadedBrowser;
   if (b && b.isConnected()) return b;
   let nb: Browser;
+  const headless = process.env.CAREER_OPS_BROWSER_HEADLESS === "1";
+  const args = headless ? [] : ["--window-position=-3200,-3200", "--window-size=1280,940"];
   try {
     nb = await chromium.launch({
       channel: "chrome",
-      headless: false,
-      args: ["--window-position=-3200,-3200", "--window-size=1280,940"], // off-screen during fill; moved on-screen at handoff
+      headless,
+      args, // off-screen during fill; moved on-screen at handoff
     });
   } catch {
     // No system Google Chrome → fall back to Playwright's bundled Chromium if
     // present; otherwise a clear, actionable error.
     try {
-      nb = await chromium.launch({ headless: false, args: ["--window-position=-3200,-3200", "--window-size=1280,940"] });
+      nb = await chromium.launch({ headless, args });
     } catch {
       throw new Error("The apply feature needs Google Chrome. Install Chrome (or run: npx playwright install chromium) and try again.");
     }
@@ -160,7 +180,23 @@ function scheduleIdleClose() {
 
 function prune() {
   const now = Date.now();
-  for (const [id, s] of SESSIONS) if (now - s.createdAt > 15 * 60_000) void closeSession(id);
+  for (const [id, s] of SESSIONS) if (now - s.lastActivityAt > 30 * 60_000) void closeSession(id);
+}
+
+function registerSession(args: Omit<Session, "id" | "createdAt" | "lastActivityAt">): Session {
+  const now = Date.now();
+  const session: Session = {
+    ...args,
+    id: `apply-${crypto.randomUUID()}`,
+    createdAt: now,
+    lastActivityAt: now,
+  };
+  SESSIONS.set(session.id, session);
+  return session;
+}
+
+function touch(session: Session): void {
+  session.lastActivityAt = Date.now();
 }
 
 /** Bounded scroll pass to trigger lazy/virtualized forms that only render their
@@ -173,11 +209,11 @@ async function nudgeScroll(page: Page): Promise<void> {
   await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
 }
 
-export async function openSession(url: string, cliId?: string, forceAgent?: boolean, noApplyBtn?: boolean): Promise<{ id: string; title: string; fields: ApplyField[]; shots: string[]; issues: ApplyIssue[]; needsDrive?: boolean }> {
+export async function openSession(url: string, cliId?: string, forceAgent?: boolean, noApplyBtn?: boolean): Promise<{ id: string; title: string; fields: ApplyField[]; shots: string[]; issues: ApplyIssue[]; needsDrive?: boolean; needsUser?: boolean; control: BrowserControl }> {
   prune();
   if (globalThis.__coIdleTimer) clearTimeout(globalThis.__coIdleTimer); // someone's active
   const browser = await headedBrowser();
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: BROWSER_VIEWPORT });
   context.setDefaultTimeout(8000); // no single action hangs the whole open/fill
   const page = await context.newPage();
   const abort = async (msg: string): Promise<never> => {
@@ -201,7 +237,12 @@ export async function openSession(url: string, cliId?: string, forceAgent?: bool
   const resp = await gotoResilient(page, url);
   await snap(); // first paint
   const sBlock = statusBlock(resp?.status(), resp ? resp.headers() : {});
-  if (sBlock) return abort(sBlock.message);
+  if (sBlock) {
+    if (!HUMAN_RECOVERABLE_BLOCKS.has(sBlock.code)) return abort(sBlock.message);
+    const title = (await page.title().catch(() => "")) || "Application";
+    const session = registerSession({ url, title, fields: [], context, page, frame: page.mainFrame(), control: "user", formShot: shots[shots.length - 1] });
+    return { id: session.id, title, fields: [], shots, issues: [sBlock], needsUser: true, control: session.control };
+  }
 
   // 2) Clear any cookie/consent overlay that hides the form (never a hard block).
   const consentIssues = await dismissConsent(page);
@@ -260,10 +301,14 @@ export async function openSession(url: string, cliId?: string, forceAgent?: bool
     // session open and hand off to the STREAMED drive route, so the user watches
     // the agent reach the form live (/api/apply/drive). Otherwise abort.
     if (cliId && why.code === "no-form") {
-      const id = `apply-${crypto.randomUUID()}`;
       const title = form.title || (await page.title().catch(() => "")) || "Application";
-      SESSIONS.set(id, { id, url, title, fields: [], context, page, frame, createdAt: Date.now(), formShot: shots[shots.length - 1] });
-      return { id, title, fields: [], shots, issues: [], needsDrive: true };
+      const session = registerSession({ url, title, fields: [], context, page, frame, control: "agent", formShot: shots[shots.length - 1] });
+      return { id: session.id, title, fields: [], shots, issues: [], needsDrive: true, control: session.control };
+    }
+    if (HUMAN_RECOVERABLE_BLOCKS.has(why.code)) {
+      const title = form.title || (await page.title().catch(() => "")) || "Application";
+      const session = registerSession({ url, title, fields: [], context, page, frame, control: "user", formShot: shots[shots.length - 1] });
+      return { id: session.id, title, fields: [], shots, issues: [why], needsUser: true, control: session.control };
     }
     return abort(why.message);
   }
@@ -277,13 +322,71 @@ export async function openSession(url: string, cliId?: string, forceAgent?: bool
   if (aiInterpreted) issues.push({ level: "info", code: "ai-interpreted", message: "This form had an uncommon layout, so AI read its fields live — give them an extra check before submitting." });
   if (unlabeled > 0) issues.push({ level: "warn", code: "unlabeled-fields", message: `${unlabeled} field${unlabeled > 1 ? "s" : ""} couldn't be labelled cleanly — double-check ${unlabeled > 1 ? "them" : "it"} before submitting.` });
 
-  const id = `apply-${crypto.randomUUID()}`;
-  SESSIONS.set(id, { id, url, title: form.title, fields: form.fields, context, page, frame, createdAt: Date.now(), formShot: shots[shots.length - 1] });
-  return { id, title: form.title, fields: form.fields, shots, issues };
+  const control: BrowserControl = cap ? "user" : "agent";
+  const session = registerSession({ url, title: form.title, fields: form.fields, context, page, frame, control, formShot: shots[shots.length - 1] });
+  return { id: session.id, title: form.title, fields: form.fields, shots, issues, needsUser: !!cap, control };
 }
 
 export function getSession(id: string): Session | undefined {
+  prune();
   return SESSIONS.get(id);
+}
+
+export function browserSessionState(id: string): { id: string; title: string; url: string; control: BrowserControl; viewport: typeof BROWSER_VIEWPORT } | null {
+  const session = getSession(id);
+  if (!session) return null;
+  touch(session);
+  return { id: session.id, title: session.title, url: session.page.url() || session.url, control: session.control, viewport: BROWSER_VIEWPORT };
+}
+
+export async function captureBrowserFrame(id: string): Promise<Buffer | null> {
+  const session = getSession(id);
+  if (!session) return null;
+  touch(session);
+  return session.page.screenshot({ type: "jpeg", quality: 62 }).catch(() => null);
+}
+
+export function setBrowserControl(id: string, control: BrowserControl): BrowserControl {
+  const session = getSession(id);
+  if (!session) throw new Error("apply session not found");
+  session.control = control;
+  touch(session);
+  return session.control;
+}
+
+export type BrowserInput =
+  | { type: "click"; x: number; y: number }
+  | { type: "scroll"; deltaX: number; deltaY: number }
+  | { type: "text"; text: string }
+  | { type: "key"; key: string };
+
+const SAFE_KEYS = new Set(["Backspace", "Tab", "Enter", "Escape", "Delete", "Home", "End", "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"]);
+
+export async function userBrowserInput(id: string, input: BrowserInput): Promise<void> {
+  const session = getSession(id);
+  if (!session) throw new Error("apply session not found");
+  if (session.control !== "user" && session.control !== "review") throw new Error("browser is controlled by the agent");
+  touch(session);
+  await session.page.bringToFront().catch(() => {});
+  if (input.type === "click") {
+    const x = Math.max(0, Math.min(BROWSER_VIEWPORT.width, input.x));
+    const y = Math.max(0, Math.min(BROWSER_VIEWPORT.height, input.y));
+    await session.page.mouse.click(x, y);
+    return;
+  }
+  if (input.type === "scroll") {
+    await session.page.mouse.wheel(Math.max(-4000, Math.min(4000, input.deltaX)), Math.max(-4000, Math.min(4000, input.deltaY)));
+    return;
+  }
+  if (input.type === "text") {
+    await session.page.keyboard.insertText(input.text.slice(0, 4000));
+    return;
+  }
+  if (SAFE_KEYS.has(input.key) || /^ControlOrMeta\+[A-Z]$/.test(input.key)) {
+    await session.page.keyboard.press(input.key);
+    return;
+  }
+  throw new Error("unsupported key");
 }
 
 /** Open a bare headed page on a URL (for the agentic drive loop / validation),
@@ -291,7 +394,7 @@ export function getSession(id: string): Session | undefined {
 export async function newDrivePage(url: string): Promise<{ page: Page; context: BrowserContext }> {
   if (globalThis.__coIdleTimer) clearTimeout(globalThis.__coIdleTimer);
   const browser = await headedBrowser();
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: BROWSER_VIEWPORT });
   context.setDefaultTimeout(8000);
   const page = await context.newPage();
   await gotoResilient(page, url);
@@ -366,6 +469,9 @@ export async function fillSession(
 ): Promise<{ steps: FillStep[]; navigated: boolean; issues: ApplyIssue[] }> {
   const s = SESSIONS.get(id);
   if (!s) throw new Error("apply session not found (it may have expired)");
+  if (s.control === "user") throw new Error("return control to the agent before filling");
+  s.control = "agent";
+  touch(s);
   const byId = new Map(fieldsMeta.map((f) => [f.id, f]));
   const steps: FillStep[] = [];
   // Belt-and-suspenders: if filling ever navigates the page (i.e. something got
@@ -522,6 +628,8 @@ export async function fillSession(
 export async function handoffSession(id: string): Promise<void> {
   const s = SESSIONS.get(id);
   if (!s) throw new Error("apply session not found");
+  s.control = "review";
+  touch(s);
   try {
     const cdp = await s.context.newCDPSession(s.page);
     const { windowId } = (await cdp.send("Browser.getWindowForTarget")) as { windowId: number };

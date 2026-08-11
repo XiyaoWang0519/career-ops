@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { ApplyBackdrop } from "@/components/apply/apply-backdrop";
 import { instrumentSerif } from "@/lib/fonts";
@@ -45,6 +45,33 @@ export function useCountUp(target: number): number {
   return Math.round(val);
 }
 
+function NumberPop({ value }: { value: number }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const chars = value.toLocaleString().split("");
+
+  useLayoutEffect(() => {
+    const group = ref.current;
+    if (!group) return;
+    group.classList.remove("is-animating");
+    void group.offsetHeight;
+    group.classList.add("is-animating");
+  }, [value]);
+
+  return (
+    <span ref={ref} className="t-digit-group is-animating">
+      {chars.map((char, index) => (
+        <span
+          key={`${index}-${char}`}
+          className="t-digit"
+          data-stagger={index === chars.length - 2 ? "1" : index === chars.length - 1 ? "2" : undefined}
+        >
+          {char}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function SourceChip({ ats, s }: { ats: AtsSource; s?: SourceState }) {
   const state = s?.state ?? "queued";
   const pct = s?.total ? Math.min(100, Math.round(((s.done ?? 0) / s.total) * 100)) : state === "swept" || state === "noisy" ? 100 : 0;
@@ -70,7 +97,6 @@ function SourceChip({ ats, s }: { ats: AtsSource; s?: SourceState }) {
 
 export function DiscoveringState() {
   const { sources, matchCount, companiesScanned, status, phase } = useExplore();
-  const shown = useCountUp(matchCount);
   const companies = useCountUp(companiesScanned);
 
   return (
@@ -85,7 +111,7 @@ export function DiscoveringState() {
         </div>
 
         <div>
-          <div className={`${instrumentSerif.className} co-disc__counter text-foreground`}>{shown}</div>
+          <div className={`${instrumentSerif.className} co-disc__counter text-foreground`}><NumberPop value={matchCount} /></div>
           <p className="mt-1 text-sm text-muted">
             {phase === "revealing" ? "fresh roles found — free" : matchCount > 0 ? "fresh roles and counting…" : "scanning the network…"}
           </p>
@@ -102,13 +128,18 @@ export function DiscoveringState() {
           {status || "Casting the net across the ATS network…"}
         </p>
 
-        {phase !== "revealing" && (
-          <div className="co-disc__skel" aria-hidden>
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="co-disc__skelcard" />
-            ))}
+        <div className={phase === "revealing" ? "t-skel is-revealed h-[29.5rem] w-full max-w-[46rem] sm:h-[14.5rem]" : "t-skel h-[29.5rem] w-full max-w-[46rem] sm:h-[14.5rem]"} aria-hidden>
+          <div className="t-skel-skeleton is-pulsing">
+            <div className="co-disc__skel">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="co-disc__skelcard" />
+              ))}
+            </div>
           </div>
-        )}
+          <div className="t-skel-content grid place-items-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+            Fresh matches ready
+          </div>
+        </div>
       </div>
     </>
   );

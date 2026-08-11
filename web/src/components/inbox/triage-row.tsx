@@ -104,7 +104,10 @@ export function TriageRow({
               shortlisted ? "text-brand" : "text-muted hover:bg-surface-hover hover:text-brand",
             )}
           >
-            {shortlisted ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
+            <span className="t-icon-swap" data-state={shortlisted ? "b" : "a"} aria-hidden>
+              <Bookmark className="t-icon size-4" data-icon="a" />
+              <BookmarkCheck className="t-icon size-4" data-icon="b" />
+            </span>
             <span className="max-sm:hidden">{shortlisted ? "Saved" : "Save"}</span>
           </button>
           <button

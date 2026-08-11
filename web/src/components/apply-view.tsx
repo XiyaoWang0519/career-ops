@@ -5,7 +5,7 @@ import type { ApplyIssue, DriveStep } from "@/lib/apply/issue";
 import { useApply } from "@/components/apply/apply-provider";
 import type { ApplyField } from "@/lib/apply/extract";
 import { cn } from "@/lib/cn";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 // Co-located UI animations (HMR-proof vs Tailwind v4's stale globals.css):
 // field cascade-in, per-field "just drafted" flash, skeleton shimmer, hero orb.
@@ -249,12 +249,15 @@ function DrivePanel({ steps, filling }: { steps: DriveStep[]; filling?: boolean 
         <div className="font-display text-2xl text-landing">{filling ? "AI is filling the form…" : "Reaching your form…"}</div>
         <p className="max-w-sm text-sm text-muted">{filling ? "The AI is driving the real form field-by-field on your machine — it never submits; you review and submit." : "The AI is navigating the real application on your machine to reach the form — it never submits."}</p>
       </div>
-      {last?.thumb ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={last.thumb} alt="" className="w-full rounded-xl border border-border shadow-xl shadow-black/10" />
-      ) : (
-        <div className="co-skel h-56 w-full rounded-xl" />
-      )}
+      <div className={cn("t-skel h-56 w-full", last?.thumb && "is-revealed")}>
+        <div className="t-skel-skeleton is-pulsing"><div className="co-skel h-56 w-full rounded-xl" /></div>
+        <div className="t-skel-content">
+          {last?.thumb && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={last.thumb} alt="" className="h-56 w-full rounded-xl border border-border object-cover shadow-xl shadow-black/10" />
+          )}
+        </div>
+      </div>
       {steps.length > 0 && (
         <ol className="mt-3 space-y-1.5 rounded-xl border border-border/70 bg-surface/70 p-3 backdrop-blur-sm">
           {steps.map((s, i) => (
@@ -352,13 +355,37 @@ const DRAFT_MSGS = [
 ];
 function RotatingStatus() {
   const [i, setI] = useState(0);
+  const [displayed, setDisplayed] = useState(DRAFT_MSGS[0]);
+  const [phase, setPhase] = useState<"" | "is-exit" | "is-enter-start">("");
+  const textRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const t = setInterval(() => setI((n) => (n + 1) % DRAFT_MSGS.length), 2800);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const next = DRAFT_MSGS[i];
+    if (next === displayed) return;
+    const configured = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--text-swap-dur"));
+    const duration = Number.isFinite(configured) ? configured : 150;
+    setPhase("is-exit");
+    const timer = window.setTimeout(() => {
+      setDisplayed(next);
+      setPhase("is-enter-start");
+    }, duration);
+    return () => window.clearTimeout(timer);
+  }, [displayed, i]);
+
+  useLayoutEffect(() => {
+    if (phase !== "is-enter-start" || !textRef.current) return;
+    void textRef.current.offsetHeight;
+    const frame = requestAnimationFrame(() => setPhase(""));
+    return () => cancelAnimationFrame(frame);
+  }, [displayed, phase]);
+
   return (
-    <div key={i} className="co-rise truncate text-xs text-muted">
-      {DRAFT_MSGS[i]}
+    <div ref={textRef} className={cn("t-text-swap truncate text-xs text-muted", phase)}>
+      {displayed}
     </div>
   );
 }
@@ -426,6 +453,30 @@ function FieldRow({
   // While the planner is drafting, an empty answer shimmers like it's being
   // written; it flashes into the real value the instant the draft lands.
   const writing = drafting && !value && f.type !== "file";
+  const control = f.type === "textarea" ? (
+    <textarea rows={3} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={cn(base, "resize-none")} />
+  ) : (f.type === "select" || f.type === "radio") && f.options && f.options.length > 0 ? (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={base}>
+      <option value="">Choose…</option>
+      {f.options.map((option, optionIndex) => <option key={optionIndex} value={option}>{option}</option>)}
+    </select>
+  ) : f.type === "checkbox" ? (
+    <label className="flex items-center gap-2 text-sm text-muted">
+      <input type="checkbox" checked={value === "true" || value === "yes"} onChange={(e) => onChange(e.target.checked ? "true" : "")} className="size-4 accent-brand" /> {f.label || "Yes"}
+    </label>
+  ) : f.type === "file" ? (
+    /resume|résumé|\bcv\b|curriculum|currículum|lebenslauf/i.test(f.label || "") ? (
+      <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
+        <FileCheck2 className="size-4 shrink-0" /> Your tailored CV (PDF) will be attached automatically — you can swap it on the real form.
+      </div>
+    ) : (
+      <div className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted">
+        <Paperclip className="size-4 shrink-0" /> Attach this file yourself on the real form at the handoff.
+      </div>
+    )
+  ) : (
+    <input type={["email", "tel", "url", "number", "date"].includes(f.type) ? f.type : "text"} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={base} />
+  );
   return (
     <div className={flash ? "co-flash" : ""} style={flash ? { animationDelay: `${Math.min(index * 70, 900)}ms` } : undefined}>
       <label className="mb-1.5 flex items-center gap-1 text-sm font-medium">
@@ -433,35 +484,11 @@ function FieldRow({
         {f.required && <Asterisk className="size-3 text-brand" />}
         {needs && <span className="ml-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">you confirm</span>}
       </label>
-      {writing ? (
-        <div className={cn("co-skel", f.type === "textarea" ? "h-[68px]" : "h-9")} />
-      ) : f.type === "textarea" ? (
-        <textarea rows={3} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={cn(base, "resize-none")} />
-      ) : (f.type === "select" || f.type === "radio") && f.options && f.options.length > 0 ? (
-        <select value={value} onChange={(e) => onChange(e.target.value)} className={base}>
-          <option value="">Choose…</option>
-          {f.options.map((o, i) => (
-            <option key={i} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-      ) : f.type === "checkbox" ? (
-        <label className="flex items-center gap-2 text-sm text-muted">
-          <input type="checkbox" checked={value === "true" || value === "yes"} onChange={(e) => onChange(e.target.checked ? "true" : "")} className="size-4 accent-brand" /> {f.label || "Yes"}
-        </label>
-      ) : f.type === "file" ? (
-        /resume|résumé|\bcv\b|curriculum|currículum|lebenslauf/i.test(f.label || "") ? (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
-            <FileCheck2 className="size-4 shrink-0" /> Your tailored CV (PDF) will be attached automatically — you can swap it on the real form.
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-sm text-muted">
-            <Paperclip className="size-4 shrink-0" /> Attach this file yourself on the real form at the handoff.
-          </div>
-        )
-      ) : (
-        <input type={["email", "tel", "url", "number", "date"].includes(f.type) ? f.type : "text"} maxLength={f.maxLength} value={value} onChange={(e) => onChange(e.target.value)} placeholder={needs ? "You fill this one." : "…"} className={base} />
+      {f.type === "file" ? control : (
+        <div className={cn("t-skel", !writing && "is-revealed", f.type === "textarea" ? "min-h-[68px]" : "min-h-9")}>
+          <div className="t-skel-skeleton is-pulsing"><div className="co-skel h-full min-h-9 w-full" /></div>
+          <div className="t-skel-content">{control}</div>
+        </div>
       )}
     </div>
   );

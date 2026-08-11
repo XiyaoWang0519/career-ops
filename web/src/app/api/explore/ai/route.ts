@@ -4,7 +4,7 @@ import path from "node:path";
 import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory } from "@/lib/career-ops";
 import { assembleDedupContext } from "@/lib/core/discover";
-import { codexTextDelta } from "@/lib/codex-stream.mjs";
+import { codexStderrSummary, parseCodexLine } from "@/lib/codex-stream.mjs";
 
 // AI search orchestrates modes/discover.md by running the USER'S configured CLI
 // headless (CLI-agnostic, like the assistant). Web hunting is slow → generous
@@ -27,6 +27,10 @@ Follow modes/discover.md exactly. You are running headless for the web:
 - Be a GENEROUS FINDER, not a judge: when a constraint (location, seniority, stage) can't be confirmed from the shallow signal, INCLUDE + flag the uncertainty in "why" — don't discard. NEVER score or judge fit; the A–F evaluation does that later, with the full JD.
 - DEDUP: skip anything already known below; don't re-propose the user's existing companies.
 `;
+
+function claudeToolFamily(name: string): "web_search" | "mcp" {
+  return /web(search|fetch)/i.test(name) ? "web_search" : "mcp";
+}
 
 export async function POST(req: Request) {
   let body: { query?: string; cliId?: string };
@@ -82,7 +86,7 @@ export async function POST(req: Request) {
       ]
     : spec.args(prompt, "research");
 
-  const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+  const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
 
   const encoder = new TextEncoder();
   // `closed` + kill timer in the OUTER scope so cancel() can flip `closed` before
@@ -93,7 +97,8 @@ export async function POST(req: Request) {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let buf = "";
-      let emitted = false;
+      let emittedText = false;
+      let codexStderr = "";
       killer = setTimeout(() => {
         try {
           child.kill("SIGTERM");
@@ -122,14 +127,19 @@ export async function POST(req: Request) {
           return false;
         }
       };
-      const emit = (s: string) => {
-        if (safeEnqueue(s)) emitted = true;
+      const send = (event: Record<string, unknown>) => {
+        safeEnqueue(`${JSON.stringify(event)}\n`);
+      };
+      const emitText = (text: string) => {
+        if (!text) return;
+        send({ type: "text", text });
+        emittedText = true;
       };
 
       child.stdout.on("data", (d: Buffer) => {
         if (closed) return;
         if (!isClaude && !isCodex) {
-          emit(d.toString());
+          emitText(d.toString());
           return;
         }
         buf += d.toString();
@@ -139,15 +149,28 @@ export async function POST(req: Request) {
           buf = buf.slice(nl + 1);
           if (!line) continue;
           if (isCodex) {
-            const text = codexTextDelta(line);
-            if (text) emit(text);
+            for (const event of parseCodexLine(line)) {
+              if (event.type === "text") emitText(event.text);
+              else if (event.type === "reasoning" || event.type === "tool") send(event);
+              else if (event.type === "error") send(event);
+            }
             continue;
           }
           try {
             const obj = JSON.parse(line);
-            if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
-              const text = obj.event.delta?.text;
-              if (typeof text === "string") emit(text);
+            if (obj.type === "stream_event") {
+              if (obj.event?.type === "content_block_start" && obj.event.content_block?.type === "tool_use") {
+                const name = typeof obj.event.content_block.name === "string" ? obj.event.content_block.name : "Tool";
+                send({
+                  type: "tool",
+                  id: String(obj.event.content_block.id || `${name}:${Date.now()}`),
+                  name,
+                  family: claudeToolFamily(name),
+                });
+              } else if (obj.event?.type === "content_block_delta") {
+                const text = obj.event.delta?.text;
+                if (typeof text === "string") emitText(text);
+              }
             }
           } catch {
             /* partial / non-json line — skip */
@@ -156,16 +179,31 @@ export async function POST(req: Request) {
       });
       child.stderr.on("data", (d: Buffer) => {
         const s = d.toString();
+        if (isCodex) {
+          codexStderr = (codexStderr + s).slice(-12_000);
+          return;
+        }
         if (/error|not found|denied|fatal/i.test(s)) {
-          safeEnqueue(`\n[${spec.name}] ${s.trim()}\n`);
+          send({ type: "error", msg: `[${spec.name}] ${s.trim()}`.slice(0, 300) });
         }
       });
       child.on("error", (e) => {
-        safeEnqueue(`\n[error launching ${spec.name}: ${e.message}]`);
+        send({ type: "error", msg: `Error launching ${spec.name}: ${e.message}` });
         safeClose();
       });
-      child.on("close", () => {
-        if (!emitted) safeEnqueue("_(no output — is the AI tool signed in?)_");
+      child.on("close", (_code, signal) => {
+        if (!emittedText) {
+          const summary = isCodex ? codexStderrSummary(codexStderr) : "";
+          send({
+            type: "error",
+            msg: summary
+              ? `Codex: ${summary}`
+              : signal
+                ? `${spec.name} stopped before completing the search.`
+                : `No output — is ${spec.name} signed in?`,
+          });
+        }
+        send({ type: "done" });
         safeClose();
       });
     },
@@ -182,7 +220,7 @@ export async function POST(req: Request) {
 
   return new Response(stream, {
     headers: {
-      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
     },

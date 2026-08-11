@@ -5,6 +5,7 @@ import path from "node:path";
 import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot } from "@/lib/career-ops";
 import { codexTextDelta } from "@/lib/codex-stream.mjs";
+import { extractPdfText } from "@/lib/cv/pdf-text.mjs";
 
 // Parse a CV (pasted text or an uploaded PDF) into clean cv.md markdown by running
 // the USER'S OWN CLI headless — the web never ships a heavyweight parser, and the
@@ -76,20 +77,44 @@ export async function POST(req: Request) {
       cliId = String(form.get("cliId") || "");
       const file = form.get("file");
       if (!(file instanceof File)) return Response.json({ error: "no file" }, { status: 400 });
-      // Reading a PDF/DOCX from a path needs the CLI's file tool, which only Claude
-      // is granted here. Tell non-Claude users plainly instead of failing opaquely.
-      if (cliId !== "claude" && /\.(pdf|docx)$/i.test(file.name)) {
-        return Response.json({ error: "PDF upload needs Claude Code — paste your CV text instead." }, { status: 400 });
-      }
       const ext = (file.name.match(/\.[a-z0-9]+$/i)?.[0] || ".pdf").toLowerCase();
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "career-ops-cv-"));
       tempFile = path.join(dir, `cv${ext}`); // outside the repo, basename-only
       fs.writeFileSync(tempFile, Buffer.from(await file.arrayBuffer()), { mode: 0o600 }); // PII → owner-only
-      promptSource = FILE_SRC(tempFile);
+      const isPdf = ext === ".pdf" || file.type === "application/pdf";
+      if (isPdf) {
+        const extracted = await extractPdfText(tempFile);
+        if (extracted.ok) {
+          promptSource = TEXT_SRC(extracted.text);
+        } else if (cliId === "claude") {
+          // Claude can still inspect an image-only PDF through its local Read
+          // tool when deterministic text extraction has nothing to work with.
+          promptSource = FILE_SRC(tempFile);
+        } else {
+          cleanupTemp(tempFile);
+          tempFile = null;
+          const error =
+            extracted.reason === "no-text"
+              ? "This PDF has no selectable text (it may be a scan). Paste the text instead."
+              : extracted.reason === "unavailable"
+                ? "PDF text extraction is unavailable. Install Poppler (pdftotext), or paste the text instead."
+                : "Couldn't extract text from that PDF. Paste the text instead.";
+          return Response.json({ error }, { status: 422 });
+        }
+      } else {
+        // Binary non-PDF formats still require a CLI with a local file reader.
+        if (cliId !== "claude" && /\.docx$/i.test(file.name)) {
+          cleanupTemp(tempFile);
+          tempFile = null;
+          return Response.json({ error: "DOCX upload needs Claude Code — paste your CV text instead." }, { status: 422 });
+        }
+        promptSource = FILE_SRC(tempFile);
+      }
     } else {
       return Response.json({ error: "unsupported content-type" }, { status: 400 });
     }
   } catch {
+    if (tempFile) cleanupTemp(tempFile);
     return Response.json({ error: "bad request" }, { status: 400 });
   }
 
@@ -121,7 +146,7 @@ export async function POST(req: Request) {
 
   let child;
   try {
-    child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env });
+    child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   } catch (e) {
     if (tempFile) cleanupTemp(tempFile); // never leak the CV temp if spawn throws sync
     return Response.json({ error: e instanceof Error ? e.message : "failed to start the CLI" }, { status: 500 });

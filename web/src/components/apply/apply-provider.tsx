@@ -9,6 +9,7 @@ type Meta = { needsConfirmation?: boolean };
 type Status = "idle" | "opening" | "driving" | "prefilling" | "ready" | "filling" | "done" | "error";
 
 type ApplyCtx = {
+  sessionId: string;
   status: Status;
   url: string;
   title: string;
@@ -22,7 +23,8 @@ type ApplyCtx = {
   issues: ApplyIssue[];
   driveSteps: DriveStep[];
   error: string;
-  open: (url: string, opts?: { prefill?: boolean; company?: string }) => Promise<void>;
+  open: (url: string, opts?: { prefill?: boolean; company?: string }) => Promise<string | null>;
+  resumeAgent: () => Promise<void>;
   prefill: () => Promise<void>;
   setAnswer: (idOrLabel: string, value: string) => void;
   fill: () => Promise<void>;
@@ -62,7 +64,8 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   const [issues, setIssues] = useState<ApplyIssue[]>([]);
   const [driveSteps, setDriveSteps] = useState<DriveStep[]>([]);
   const [error, setError] = useState("");
-  const sessionId = useRef<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState("");
+  const sessionIdRef = useRef<string | null>(null);
   const companyRef = useRef<string>("");
   const fieldsRef = useRef<ApplyField[]>([]);
   fieldsRef.current = fields;
@@ -110,6 +113,10 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
             if (ev.title) setTitle(ev.title);
             setIssues(ev.issues ?? []);
             setStatus("ready"); // → the ready-effect auto-prefills if pending
+          } else if (ev.t === "needs_user") {
+            finished = true;
+            setIssues((prev) => [...prev, { level: "block", code: "needs-user", message: ev.message || "The agent needs you to take over the browser." }]);
+            setStatus("ready");
           } else if (ev.t === "error") {
             finished = true;
             setError(ev.message || "The agent couldn't reach a fillable form.");
@@ -128,6 +135,16 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const open = useCallback(async (u: string, opts?: { prefill?: boolean; company?: string }) => {
+    const previousSessionId = sessionIdRef.current;
+    sessionIdRef.current = null;
+    setActiveSessionId("");
+    if (previousSessionId) {
+      await fetch("/api/apply/close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: previousSessionId }),
+      }).catch(() => {});
+    }
     setStatus("opening");
     setError("");
     setFields([]);
@@ -147,29 +164,51 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
       if (d.error) {
         setError(d.error);
         setStatus("error");
-        return;
+        return null;
       }
-      sessionId.current = d.id;
+      sessionIdRef.current = d.id;
+      setActiveSessionId(d.id);
       setTitle(d.title);
       setShots(d.shots ?? []);
       pendingPrefill.current = !!opts?.prefill;
+      setIssues(d.issues ?? []);
+      if (d.needsUser) {
+        pendingPrefill.current = false;
+        setFields(d.fields ?? []);
+        setStatus("ready");
+        return d.id;
+      }
       if (d.needsDrive) {
         // The form is behind navigation → the agent drives to reach it, streamed.
         setStatus("driving");
-        await drive(d.id);
-        return;
+        void drive(d.id);
+        return d.id;
       }
       setFields(d.fields);
-      setIssues(d.issues ?? []);
       setStatus("ready");
+      return d.id;
     } catch {
       setError("Could not open the form.");
       setStatus("error");
+      return null;
     }
-  }, []);
+  }, [drive]);
+
+  const resumeAgent = useCallback(async () => {
+    const id = sessionIdRef.current;
+    if (!id) return;
+    setError("");
+    await fetch("/api/apply/browser/control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId: id, control: "agent" }),
+    });
+    setStatus("driving");
+    await drive(id);
+  }, [drive]);
 
   const prefill = useCallback(async () => {
-    if (!sessionId.current) return;
+    if (!sessionIdRef.current) return;
     const id = await cliId();
     if (!id) {
       setError("Connect an AI tool in Config first, then pre-fill from your CV.");
@@ -189,7 +228,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
       setMeta(m);
     };
     try {
-      const r = await fetch("/api/apply/prefill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: id }) });
+      const r = await fetch("/api/apply/prefill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionIdRef.current, cliId: id }) });
       if (!r.body) {
         setError("Couldn't pre-fill — no response stream.");
         setStatus("ready");
@@ -256,11 +295,11 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const fill = useCallback(async () => {
-    if (!sessionId.current) return;
+    if (!sessionIdRef.current) return;
     setStatus("filling");
     setSteps([]);
     try {
-      const r = await fetch("/api/apply/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, answers, fields, handoff: true, company: companyRef.current }) });
+      const r = await fetch("/api/apply/fill", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionIdRef.current, answers, fields, handoff: true, company: companyRef.current }) });
       const d = await r.json();
       if (d.error) {
         setError(d.error);
@@ -295,7 +334,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   // answers, streamed (drive panel), never submits, then hands off. Used as the
   // escalation when deterministic fill fails, or on demand.
   const agentFill = useCallback(async () => {
-    if (!sessionId.current) return;
+    if (!sessionIdRef.current) return;
     const fs = fieldsRef.current;
     const a = answersRef.current;
     const ans = fs.filter((f) => f.type !== "file" && (a[f.id] || "").trim()).map((f) => ({ label: f.label || f.id, value: a[f.id] }));
@@ -303,7 +342,7 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
     setError("");
     setStatus("filling");
     try {
-      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionId.current, cliId: await cliId(), goal: "full", answers: ans }) });
+      const r = await fetch("/api/apply/drive", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: sessionIdRef.current, cliId: await cliId(), goal: "full", answers: ans }) });
       if (!r.body) {
         setError("The agent couldn't start filling.");
         setStatus("error");
@@ -346,11 +385,12 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   agentFillRef.current = agentFill;
 
   const reset = useCallback(() => {
-    if (sessionId.current) {
-      const id = sessionId.current;
+    if (sessionIdRef.current) {
+      const id = sessionIdRef.current;
       void fetch("/api/apply/close", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: id }), keepalive: true }).catch(() => {});
     }
-    sessionId.current = null;
+    sessionIdRef.current = null;
+    setActiveSessionId("");
     companyRef.current = "";
     pendingPrefill.current = false;
     setStatus("idle");
@@ -369,8 +409,8 @@ export function ApplyProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ status, url, title, company, fields, answers, meta, steps, shots, prefillLog, issues, driveSteps, error, open, prefill, setAnswer, fill, agentFill, reset }),
-    [status, url, title, company, fields, answers, meta, steps, shots, prefillLog, issues, driveSteps, error, open, prefill, setAnswer, fill, agentFill, reset],
+    () => ({ sessionId: activeSessionId, status, url, title, company, fields, answers, meta, steps, shots, prefillLog, issues, driveSteps, error, open, resumeAgent, prefill, setAnswer, fill, agentFill, reset }),
+    [activeSessionId, status, url, title, company, fields, answers, meta, steps, shots, prefillLog, issues, driveSteps, error, open, resumeAgent, prefill, setAnswer, fill, agentFill, reset],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -17,6 +17,15 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clisSrc = fs.readFileSync(path.join(here, "../../src/lib/clis.ts"), "utf8");
+const cliSpawnFiles = [
+  "../../src/app/api/assistant/route.ts",
+  "../../src/app/api/cv/ingest/route.ts",
+  "../../src/app/api/explore/ai/route.ts",
+  "../../src/app/api/run/route.ts",
+  "../../src/app/api/apply/prefill/route.ts",
+  "../../src/lib/apply/agent-interpret.ts",
+  "../../src/lib/apply/drive.ts",
+];
 
 test("Codex write kinds use workspace-write + network + json", () => {
   assert.match(clisSrc, /exec/);
@@ -29,9 +38,21 @@ test("Codex write kinds use workspace-write + network + json", () => {
   assert.match(clisSrc, /fix-portal/);
 });
 
-test("Codex read kinds use read-only sandbox", () => {
+test("Codex read kinds use read-only sandbox", async () => {
   assert.match(clisSrc, /read-only/);
-  assert.match(clisSrc, /-a[\s\S]*never/);
+  const { codexArgs } = await import("../../src/lib/clis.ts");
+  const args = codexArgs("hello", "assistant");
+  assert.deepEqual(args.slice(0, 3), ["-a", "never", "exec"]);
+  assert.ok(args.indexOf("-a") < args.indexOf("exec"));
+  assert.equal(args[args.indexOf("-s") + 1], "read-only");
+  assert.ok(args.includes('model_reasoning_summary="auto"'));
+});
+
+test("Codex research streams safe reasoning summaries for Explore", async () => {
+  const { codexArgs } = await import("../../src/lib/clis.ts");
+  const args = codexArgs("find roles", "research");
+  assert.equal(args[args.indexOf("-s") + 1], "read-only");
+  assert.ok(args.includes('model_reasoning_summary="auto"'));
 });
 
 test("pinnedDefaultCli and resolveCliOrDefault are exported", () => {
@@ -39,6 +60,13 @@ test("pinnedDefaultCli and resolveCliOrDefault are exported", () => {
   assert.match(clisSrc, /export function resolveCliOrDefault/);
   assert.match(clisSrc, /CAREER_OPS_DEFAULT_CLI/);
   assert.match(clisSrc, /CAREER_OPS_SIMPLE/);
+});
+
+test("AI CLI subprocesses close stdin so Codex does not wait for piped input", () => {
+  for (const relative of cliSpawnFiles) {
+    const source = fs.readFileSync(path.join(here, relative), "utf8");
+    assert.match(source, /spawn\(binPath, args, \{[^}]*stdio:\s*\["ignore",\s*"pipe",\s*"pipe"\]/s, relative);
+  }
 });
 
 test("runtime env helpers react to CAREER_OPS_DEFAULT_CLI", async () => {

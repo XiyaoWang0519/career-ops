@@ -15,7 +15,7 @@ import {
   type ExploreMode,
   type ScanEvent,
 } from "@/lib/explore";
-import { makeAiStreamParser, type AiTraceChunk } from "@/lib/explore-ai";
+import { makeAiStreamParser, type AiTraceChunk, type ExploreAiWireEvent } from "@/lib/explore-ai";
 
 export type Phase =
   | "idle"
@@ -421,6 +421,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     const parser = makeAiStreamParser({ knownUrls });
 
     const acc: DiscoveredOffer[] = [];
+    const seenToolIds = new Set<string>();
     let sawError = "";
     const handle = (chunks: AiTraceChunk[]) => {
       for (const ch of chunks) {
@@ -433,13 +434,50 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
         } else {
           setAiTrace((t) => [...t, ch]);
           if (ch.kind === "narration") {
-            const s = (ch.text.match(/\bsearch(ing|ed)?\b/gi) || []).length;
-            const f = (ch.text.match(/\bfetch(ing|ed)?\b/gi) || []).length;
-            if (s || f) setAiCost((c) => ({ ...c, searches: c.searches + s, fetches: c.fetches + f }));
+            // Older/agnostic CLIs do not expose structured tool events, so keep
+            // the former narration-based estimate only until a real tool arrives.
+            if (seenToolIds.size === 0) {
+              const s = (ch.text.match(/\bsearch(ing|ed)?\b/gi) || []).length;
+              const f = (ch.text.match(/\bfetch(ing|ed)?\b/gi) || []).length;
+              if (s || f) setAiCost((c) => ({ ...c, searches: c.searches + s, fetches: c.fetches + f }));
+            }
             setPhase((p) => (p === "casting" ? "hunting" : p));
           }
         }
       }
+    };
+
+    const handleWireEvent = (event: ExploreAiWireEvent) => {
+      if (event.type === "text") {
+        handle(parser.feed(event.text));
+        return;
+      }
+      if (event.type === "reasoning") {
+        setAiTrace((trace) => [
+          ...trace.filter((chunk) => chunk.kind !== "reasoning" || chunk.id !== event.id),
+          { kind: "reasoning", id: event.id, text: event.text },
+        ]);
+        setPhase((current) => (current === "casting" ? "hunting" : current));
+        return;
+      }
+      if (event.type === "tool") {
+        if (seenToolIds.has(event.id)) return;
+        seenToolIds.add(event.id);
+        setAiTrace((trace) => [
+          ...trace,
+          { kind: "tool", id: event.id, name: event.name, family: event.family, detail: event.detail },
+        ]);
+        if (event.family === "web_search") {
+          setAiCost((cost) => ({
+            ...cost,
+            searches: cost.searches + 1,
+            fetches: /fetch/i.test(event.name) ? cost.fetches + 1 : cost.fetches,
+          }));
+        }
+        setPhase((current) => (current === "casting" ? "hunting" : current));
+        return;
+      }
+      if (event.type === "error") sawError = event.msg;
     };
 
     try {
@@ -461,11 +499,29 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
       } else {
         const reader = r.body.getReader();
         const dec = new TextDecoder();
+        let wireBuffer = "";
+        const drainWire = () => {
+          let nl: number;
+          while ((nl = wireBuffer.indexOf("\n")) !== -1) {
+            const line = wireBuffer.slice(0, nl).trim();
+            wireBuffer = wireBuffer.slice(nl + 1);
+            if (!line) continue;
+            try {
+              handleWireEvent(JSON.parse(line) as ExploreAiWireEvent);
+            } catch {
+              /* malformed transport line — keep the remaining search alive */
+            }
+          }
+        };
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
-          handle(parser.feed(dec.decode(value, { stream: true })));
+          wireBuffer += dec.decode(value, { stream: true });
+          drainWire();
         }
+        wireBuffer += dec.decode();
+        if (wireBuffer.trim()) wireBuffer += "\n";
+        drainWire();
         handle(parser.flush());
       }
     } catch (e) {

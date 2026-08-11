@@ -29,8 +29,9 @@ Open http://localhost:3000. The app reads the career-ops checkout it lives in
 - **Explore** — free reverse-ATS scan plus AI-assisted discovery.
 - **Activity** — history of evaluations and other runs (persisted under
   `.career-ops-web/runs/`).
-- **Apply** — assisted form prefill on the **host machine only** (headed Chrome);
-  **it never submits for you**.
+- **Apply** — assisted form prefill in a live browser embedded in the assistant
+  chat. The agent can hand control to you for sign-in, MFA, CAPTCHA, or review,
+  then resume. **It never submits for you**.
 - **Config** — pick an AI tool (or pin one via env — see below).
 
 ## Friend-ready hosting (remote access)
@@ -77,6 +78,9 @@ CAREER_OPS_DEFAULT_CLI=codex
 # Trim the sidebar for a non-technical user
 CAREER_OPS_SIMPLE=1
 
+# Run the host browser headlessly and stream it into assistant chat
+CAREER_OPS_BROWSER_HEADLESS=1
+
 # Password gate (required for any non-localhost exposure)
 WEB_AUTH_PASSWORD=choose-a-strong-password
 WEB_AUTH_SECRET=long-random-string
@@ -96,11 +100,17 @@ npm run start -- -p 3001
 She signs in once (cookie lasts ~30 days), pastes a job URL, and evaluations
 stream through Codex into **her** `reports/` + tracker.
 
-### Known limitation — Apply
+### Remote Apply browser
 
-The Apply flow drives a **headed Chrome on the host**. Remote browsers cannot see
-that window, so Apply entry points are hidden when the request is not from
-localhost. Evaluate + CV generation work fine remotely.
+Set `CAREER_OPS_BROWSER_HEADLESS=1` on a server or VM. Apply launches a browser
+on that host and streams it into the assistant chat. Use **Take control** to
+click, type, paste credentials, complete MFA/CAPTCHA, or review the form without
+putting secrets into chat; use **Continue agent** to hand the same browser back.
+Only the human presses the final Submit/Send/Apply control.
+
+This requires a long-running Node process, an in-memory browser session, and a
+Chrome/Chromium process. Deploy it to a VM or persistent container, not a
+serverless Vercel Function.
 
 ## Environment variables
 
@@ -109,6 +119,7 @@ localhost. Evaluate + CV generation work fine remotely.
 | `CAREER_OPS_ROOT` | Absolute path to the career-ops checkout to read/write |
 | `CAREER_OPS_DEFAULT_CLI` | Pin the AI tool (`codex`, `claude`, …); hides the picker |
 | `CAREER_OPS_SIMPLE` | `1` — sidebar: Today · Explore · Pipeline · Follow-ups · Activity · Analytics · CV |
+| `CAREER_OPS_BROWSER_HEADLESS` | `1` — run the host browser headlessly and stream it into chat (recommended on a VM) |
 | `WEB_AUTH_PASSWORD` | Enable password login (off when unset — local zero-config) |
 | `WEB_AUTH_SECRET` | HMAC secret for the session cookie (falls back to a password-derived value) |
 | `PORT` | `next start` / `next dev` listen port |
@@ -130,3 +141,8 @@ npm run typecheck    # tsc --noEmit
 npm run build        # production build
 npm test             # node:test suite
 ```
+
+For a credential-free handoff check in development, ask the assistant to apply
+to `http://localhost:3000/api/browser-test`. The fixture exercises fake sign-in,
+agent resume, form control, and user-only submission; it returns 404 in a normal
+production build.

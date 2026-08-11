@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { Compass, Sparkles } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CostBadge } from "@/components/cost/cost-badge";
@@ -17,15 +18,50 @@ export function ExploreModeToggle({
   onChange: (m: ExploreMode) => void;
   cliConfigured: boolean;
 }) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLSpanElement>(null);
+  const initialized = useRef(false);
+
+  const movePill = (animate: boolean) => {
+    const bar = barRef.current;
+    const pill = pillRef.current;
+    const tab = bar?.querySelector<HTMLButtonElement>('.t-tab[aria-selected="true"]');
+    if (!pill || !tab) return;
+    if (!animate) {
+      const previous = pill.style.transition;
+      pill.style.transition = "none";
+      pill.style.transform = `translateX(${tab.offsetLeft}px)`;
+      pill.style.width = `${tab.offsetWidth}px`;
+      void pill.offsetWidth;
+      pill.style.transition = previous;
+      return;
+    }
+    pill.style.transform = `translateX(${tab.offsetLeft}px)`;
+    pill.style.width = `${tab.offsetWidth}px`;
+  };
+
+  useLayoutEffect(() => {
+    movePill(initialized.current);
+    initialized.current = true;
+  }, [mode]);
+
+  useEffect(() => {
+    const onResize = () => movePill(false);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   return (
-    <div className="flex w-full rounded-xl border border-border bg-surface/40 p-1 sm:inline-flex sm:w-auto">
+    <div ref={barRef} className="t-tabs co-explore-tabs w-full border border-border sm:w-auto" role="tablist" aria-label="Explore mode">
+      <span ref={pillRef} className="t-tabs-pill" aria-hidden="true" />
       <button
         type="button"
         onClick={() => onChange("scan")}
-        aria-pressed={mode === "scan"}
+        role="tab"
+        aria-selected={mode === "scan"}
         className={cn(
-          "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-sm transition-colors sm:flex-none sm:gap-2 sm:px-3 max-sm:min-h-[44px]",
-          mode === "scan" ? "bg-brand-soft text-brand" : "text-muted hover:text-foreground",
+          "t-tab flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap text-sm sm:flex-none sm:gap-2 max-sm:h-11 max-sm:min-h-[44px]",
+          mode === "scan" && "font-medium",
         )}
       >
         <Compass className="size-4" />
@@ -37,10 +73,11 @@ export function ExploreModeToggle({
       <button
         type="button"
         onClick={() => onChange("ai")}
-        aria-pressed={mode === "ai"}
+        role="tab"
+        aria-selected={mode === "ai"}
         className={cn(
-          "flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-2 text-sm transition-colors sm:flex-none sm:gap-2 sm:px-3 max-sm:min-h-[44px]",
-          mode === "ai" ? "bg-brand-soft text-brand" : "text-muted hover:text-foreground",
+          "t-tab flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap text-sm sm:flex-none sm:gap-2 max-sm:h-11 max-sm:min-h-[44px]",
+          mode === "ai" && "font-medium",
         )}
       >
         <Sparkles className="size-4" />

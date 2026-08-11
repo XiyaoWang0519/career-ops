@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bug, X, ShieldCheck, ThumbsUp, Search, Loader2 } from "lucide-react";
+import { Bug, X, ShieldCheck, ThumbsUp, Search, Loader2, ChevronDown } from "lucide-react";
 import { collect, fingerprint, issueBody, issueUrl, type Diag } from "@/lib/report/report";
 import "@/lib/report/logbuf"; // install the client error ring-buffer (side-effect)
+import { useTransitionPresence } from "@/lib/use-transition-presence";
 
 type SimilarIssue = { number: number; title: string; url: string };
 
@@ -44,6 +45,8 @@ export function BetaBanner() {
   const [diag, setDiag] = useState<Diag | null>(null);
   const [similar, setSimilar] = useState<SimilarIssue[]>([]);
   const [searching, setSearching] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const modal = useTransitionPresence(open);
 
   // Text search is behind an EXPLICIT click, never as-you-type: the user's
   // words (which can name a company) must not reach api.github.com at keystroke
@@ -100,9 +103,9 @@ export function BetaBanner() {
         </button>
       </div>
 
-      {open && diag && (
+      {modal.mounted && diag && (
         <div className="fixed inset-0 z-[96] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Report a bug" onClick={() => setOpen(false)}>
-          <div className="w-full max-w-lg rounded-2xl border border-border bg-[var(--bg)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className={`t-modal ${modal.phaseClass} w-full max-w-lg rounded-2xl border border-border bg-[var(--bg)] p-5 shadow-2xl`} onClick={(e) => e.stopPropagation()}>
             <div className="mb-3 flex items-center gap-2">
               <Bug className="size-4 text-brand" />
               <h2 className="text-sm font-semibold text-foreground">Report a bug · {diag.channel}</h2>
@@ -127,10 +130,22 @@ export function BetaBanner() {
                 {searching ? <Loader2 className="size-3 animate-spin" /> : <Search className="size-3" />} Check for existing reports first
               </button>
             )}
-            <details className="mt-3 rounded-lg border border-border bg-surface/40">
-              <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted">Exactly what gets attached — review before sending ↓</summary>
-              <pre className="max-h-52 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">{issueBody(diag, desc)}</pre>
-            </details>
+            <div className="t-acc mt-3 rounded-lg border border-border bg-surface/40" data-open={String(attachOpen)}>
+              <button
+                type="button"
+                className="t-acc-head flex w-full cursor-pointer select-none items-center px-3 py-2 text-left text-xs font-medium text-muted"
+                aria-expanded={attachOpen}
+                onClick={() => setAttachOpen((value) => !value)}
+              >
+                Exactly what gets attached — review before sending
+                <span className="t-acc-chevron ml-auto"><ChevronDown className="size-3.5" /></span>
+              </button>
+              <div className="t-acc-panel">
+                <div className="t-acc-panel-inner">
+                  <pre className="max-h-52 overflow-auto whitespace-pre-wrap border-t border-border px-3 py-2 font-mono text-[11px] leading-relaxed text-muted">{issueBody(diag, desc)}</pre>
+                </div>
+              </div>
+            </div>
             {similar.length > 0 && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
                 <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Already reported? A 👍 on an existing issue beats a duplicate:</p>
