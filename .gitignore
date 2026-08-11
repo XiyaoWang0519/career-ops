@@ -133,6 +133,11 @@ playwright-report/
 
 # Planning (local scratchpad)
 plan/
+design-qa.md
+
+# Agent-installed local skills (keep the canonical career-ops skill tracked)
+.agents/skills/refine-live/
+.agents/skills/transitions-dev/
 
 # Web — runtime cache/history the dashboard writes locally; nothing here is tracked.
 .career-ops-web/
