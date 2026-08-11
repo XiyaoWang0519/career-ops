@@ -1,17 +1,47 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pinnedDefaultCli } from "@/lib/clis";
+import { CodexUsageError, fetchCodexUsage } from "@/lib/codex-usage-fetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Reads Claude Code's per-message usage across ALL projects (~/.claude/projects/
-// **/*.jsonl) and sums tokens in the rolling 5h and 7d windows — the same scope
-// as the account's rate-limit windows. Cached 60s (the read is heavy).
+// Usage for the sidebar meter.
+// - claude: sums tokens from ~/.claude/projects/**/*.jsonl in rolling 5h / 7d
+//   windows (same scope as Claude Code's local rate-limit view). Soft budgets
+//   live on the client.
+// - codex: reads the signed-in ChatGPT plan limits from
+//   chatgpt.com/backend-api/wham/usage using ~/.codex/auth.json (same source
+//   Codex CLI /status uses).
 
-type Usage = { window5h: { tokens: number; messages: number }; window7d: { tokens: number; messages: number }; computedAt: number };
-let cache: { at: number; data: Usage } | null = null;
+type ClaudeUsage = {
+  source: "claude";
+  window5h: { tokens: number; messages: number };
+  window7d: { tokens: number; messages: number };
+  computedAt: number;
+};
+
+type CodexWindow = {
+  label: string;
+  usedPercent: number;
+  resetsAt: number | null;
+  resetAfterSeconds: number | null;
+};
+
+type CodexUsage = {
+  source: "codex";
+  planType: string | null;
+  windows: CodexWindow[];
+  computedAt: number;
+};
+
+type UsageError = { source: string; error: string; computedAt: number };
+
+type CacheEntry = { at: number; data: ClaudeUsage | CodexUsage | UsageError };
+const cache = new Map<string, CacheEntry>();
+const CACHE_MS = 60_000;
 
 function projectsDir(): string {
   return path.join(os.homedir(), ".claude", "projects");
@@ -31,7 +61,7 @@ function* walkJsonl(dir: string): Generator<string> {
   }
 }
 
-function compute(): Usage {
+function computeClaude(): ClaudeUsage {
   const now = Date.now();
   const w5 = now - 5 * 3600 * 1000;
   const w7 = now - 7 * 24 * 3600 * 1000;
@@ -75,12 +105,47 @@ function compute(): Usage {
       }
     }
   }
-  return { window5h: { tokens: t5, messages: m5 }, window7d: { tokens: t7, messages: m7 }, computedAt: now };
+  return {
+    source: "claude",
+    window5h: { tokens: t5, messages: m5 },
+    window7d: { tokens: t7, messages: m7 },
+    computedAt: now,
+  };
 }
 
-export async function GET() {
-  if (cache && Date.now() - cache.at < 60_000) return NextResponse.json(cache.data);
-  const data = compute();
-  cache = { at: Date.now(), data };
+function resolveCli(req: NextRequest): string {
+  const q = (req.nextUrl.searchParams.get("cli") || "").trim().toLowerCase();
+  if (q === "claude" || q === "codex") return q;
+  const pinned = pinnedDefaultCli();
+  if (pinned === "claude" || pinned === "codex") return pinned;
+  return "claude";
+}
+
+export async function GET(req: NextRequest) {
+  const cli = resolveCli(req);
+  const hit = cache.get(cli);
+  if (hit && Date.now() - hit.at < CACHE_MS) return NextResponse.json(hit.data);
+
+  if (cli === "codex") {
+    try {
+      const data = await fetchCodexUsage();
+      cache.set(cli, { at: Date.now(), data });
+      return NextResponse.json(data);
+    } catch (err) {
+      const message =
+        err instanceof CodexUsageError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to read Codex usage.";
+      const data: UsageError = { source: "codex", error: message, computedAt: Date.now() };
+      // Don't cache auth/config errors for long — allow quick recovery after login.
+      cache.set(cli, { at: Date.now() - CACHE_MS + 10_000, data });
+      return NextResponse.json(data, { status: 200 });
+    }
+  }
+
+  const data = computeClaude();
+  cache.set(cli, { at: Date.now(), data });
   return NextResponse.json(data);
 }
