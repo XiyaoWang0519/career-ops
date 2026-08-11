@@ -12,6 +12,9 @@ import { DiscoveryCard } from "@/components/explore/discovery-card";
 import { FollowUpCard, type FollowUp } from "@/components/home/follow-up-card";
 import { DecisionCard } from "@/components/home/decision-card";
 import { QuickEvaluate } from "@/components/quick-evaluate";
+import { RecommendationCard } from "@/components/agent-ui/recommendation-card";
+import { useJobs } from "@/components/jobs/job-store";
+import { useExplore } from "@/components/explore/explore-provider";
 
 // The retention "Today": a dual-loop action queue (the maintainer's
 // "N new matches this week · M follow-ups due"). SUPPLY loop = fresh free-scan
@@ -31,7 +34,12 @@ export function TodayDashboard({
   const [overdue, setOverdue] = useState(0);
   const [fresh, setFresh] = useState<DiscoveredOffer[]>([]);
   const router = useRouter();
+  const { startJob } = useJobs();
+  const { addToPipeline } = useExplore();
   const dateLabel = useMemo(() => new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }), []);
+  const topRec = fresh[0];
+  const recConfidence =
+    topRec?.confidence === "high" ? 0.86 : topRec?.confidence === "medium" ? 0.68 : topRec?.confidence === "low" ? 0.42 : 0.62;
 
   const refetch = useCallback(() => {
     fetch("/api/followups")
@@ -139,6 +147,48 @@ export function TodayDashboard({
       {/* C. Fresh matches this week (supply loop) */}
       {fresh.length > 0 && (
         <Section icon={Sparkles} title="Fresh matches this week" hint="Found by your free scans · 0 tokens">
+          {topRec && (
+            <RecommendationCard
+              className="mb-4"
+              title={`Evaluate ${topRec.company}?`}
+              confidence={recConfidence}
+              body={
+                <p>
+                  <span className="font-medium text-foreground">{topRec.title}</span>
+                  {topRec.location ? ` · ${topRec.location}` : ""}
+                  {topRec.why ? ` — ${topRec.why}` : " — top match from this week’s free scan."}
+                </p>
+              }
+              alternatives={fresh.slice(1, 4).map((o) => ({
+                id: o.url,
+                label: `${o.company} · ${o.title}`,
+                tone: o.confidence === "low" ? "weak" : o.verification === "unconfirmed" ? "review" : "ok",
+              }))}
+              acceptLabel="Evaluate this role"
+              onAccept={() => {
+                addToPipeline([topRec]);
+                startJob({
+                  title: `Evaluate · ${topRec.company}`,
+                  subtitle: topRec.title,
+                  kind: "evaluate",
+                  input: topRec.url,
+                  page: "/",
+                });
+              }}
+              onPickAlt={(url) => {
+                const alt = fresh.find((o) => o.url === url);
+                if (!alt) return;
+                addToPipeline([alt]);
+                startJob({
+                  title: `Evaluate · ${alt.company}`,
+                  subtitle: alt.title,
+                  kind: "evaluate",
+                  input: alt.url,
+                  page: "/",
+                });
+              }}
+            />
+          )}
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {fresh.slice(0, 6).map((o) => (
               <DiscoveryCard key={o.url} offer={o} inPipeline={inboxUrls.has(o.url)} />

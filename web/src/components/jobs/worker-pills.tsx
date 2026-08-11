@@ -1,23 +1,52 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { X, History } from "lucide-react";
+import { History } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useJobs } from "@/components/jobs/job-store";
-import { WorkerCard, pillTone, TONE } from "@/components/jobs/worker-card";
-import { cn } from "@/lib/cn";
+import { pillTone, TONE } from "@/components/jobs/worker-card";
+import { TaskRows, type TaskRowItem } from "@/components/agent-ui/task-rows";
 
 // Back-compat re-exports (app/jobs/page.tsx imports pillTone from here).
 export { pillTone, TONE };
 
-// Collapsed "worker" pills in the sidebar — each the shared <WorkerCard> wrapped
-// in a Link to its detail. Same component the assistant chat renders inline.
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** Collapsed workers tray — Task Rows (Beautiful UI #06); orb via TaskRows. */
 export function WorkerPills() {
   const { jobs, removeJob, clearFinished } = useJobs();
-  const pathname = usePathname();
-  if (jobs.length === 0) return null;
+  const [now, setNow] = useState(Date.now());
   const running = jobs.filter((j) => j.status === "running").length;
   const finished = jobs.length - running;
+
+  useEffect(() => {
+    if (running === 0) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  if (jobs.length === 0) return null;
+
+  const items: TaskRowItem[] = jobs.slice(0, 6).map((j) => {
+    const last = j.steps[j.steps.length - 1]?.label;
+    const detail =
+      j.status === "done" && j.result?.summary
+        ? j.result.summary
+        : last ?? (j.status === "running" ? "Working…" : undefined);
+    const elapsed = j.status === "running" ? fmtElapsed(now - j.startedAt) : undefined;
+    return {
+      id: j.id,
+      title: j.title,
+      detail,
+      meta: j.result?.score != null ? String(j.result.score) : elapsed,
+      status: j.status === "running" ? "running" : j.status === "error" ? "error" : "done",
+      href: `/jobs/${j.id}`,
+      onDismiss: () => removeJob(j.id),
+    };
+  });
 
   return (
     <div className="mt-4 border-t border-border pt-3">
@@ -33,39 +62,7 @@ export function WorkerPills() {
           </button>
         )}
       </div>
-      <ul className="space-y-1.5">
-        {jobs.slice(0, 6).map((j) => {
-          const active = pathname === `/jobs/${j.id}`;
-          return (
-            <li key={j.id}>
-              <Link
-                href={`/jobs/${j.id}`}
-                className={cn(
-                  "group block rounded-lg border px-2.5 py-2 transition-colors",
-                  active ? "border-brand/50 bg-brand-soft" : "border-border bg-surface/60 hover:bg-surface-hover",
-                )}
-              >
-                <WorkerCard
-                  job={j}
-                  variant="tray"
-                  trailing={
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        removeJob(j.id);
-                      }}
-                      className="text-faint opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
-                      aria-label="Dismiss job"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  }
-                />
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      <TaskRows items={items} dense />
     </div>
   );
 }

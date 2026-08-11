@@ -7,6 +7,7 @@ import type { AtsSource } from "@/lib/explore";
 import { ATS_LABEL } from "@/lib/explore";
 import { Badge } from "@/components/ui/badge";
 import { CompanyLogo } from "@/components/company-logo";
+import { SemanticTag, toneForAts } from "@/components/agent-ui/semantic-tag";
 import { cn } from "@/lib/cn";
 
 export type RowScore = { score: number | null; tone: "good" | "warn" | "bad" | "muted"; jobId: string; running: boolean };
@@ -73,7 +74,7 @@ export function TriageRow({
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint">
           {job.location && <span className="truncate">{job.location}</span>}
-          {source && <span className="rounded bg-surface-hover px-1 py-px font-medium text-muted">{ATS_LABEL[source]}</span>}
+          {source && <SemanticTag tone={toneForAts(source)}>{ATS_LABEL[source]}</SemanticTag>}
           {ago && <span>{ago}</span>}
           {/* 🔴 CRUDA: honest "not scored" — no fabricated match%. */}
           {!evaluated && <span className="italic text-muted">not scored</span>}

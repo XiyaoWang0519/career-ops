@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, History as HistoryIcon, PanelLeftClose, PanelLeftOpen, Plus, Send, Settings, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUpRight, History as HistoryIcon, PanelLeftClose, PanelLeftOpen, Plus, Settings, Sparkles, Trash2, X } from "lucide-react";
 import { ThinkingOrb } from "thinking-orbs";
 import { PartView, useAssistant } from "@/components/assistant/assistant-provider";
 import { ThinkingStatus } from "@/components/assistant/thinking-status";
+import { PromptBar } from "@/components/agent-ui/prompt-bar";
+import { StreamingBlock } from "@/components/agent-ui/streaming-block";
 import { cn } from "@/lib/cn";
 
 function formatThreadTime(timestamp: number): string {
@@ -137,18 +139,10 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, progress]);
-
-  useEffect(() => {
-    const textarea = inputRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [input]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -279,11 +273,21 @@ export default function ChatPage() {
                         ) : !visible && busy && isLast ? (
                           <ThinkingStatus progress={progress} />
                         ) : (
-                          <div className="space-y-3">
-                            {message.parts.map((part, partIndex) => (
-                              <PartView key={partIndex} part={part} jobs={jobs} onConfirm={resolveConfirm} />
-                            ))}
-                          </div>
+                          <StreamingBlock
+                            streaming={busy && isLast}
+                            followUps={
+                              !busy && isLast && cliId
+                                ? ["What's next in my pipeline?", "Draft a follow-up", "Find similar roles"]
+                                : []
+                            }
+                            onFollowUp={(q) => send(q)}
+                          >
+                            <div className="space-y-3">
+                              {message.parts.map((part, partIndex) => (
+                                <PartView key={partIndex} part={part} jobs={jobs} onConfirm={resolveConfirm} />
+                              ))}
+                            </div>
+                          </StreamingBlock>
                         )}
                       </div>
                     </div>
@@ -322,34 +326,41 @@ export default function ChatPage() {
           </Link>
         )}
 
-        <div className="rounded-2xl border border-border bg-surface p-1.5 shadow-lg shadow-black/[0.03]">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  send();
-                }
-              }}
-              placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
-              rows={1}
-              disabled={!cliId}
-              className="max-h-44 min-h-10 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-faint disabled:opacity-50"
-            />
-            <button
-              type="button"
-              onClick={() => send()}
-              disabled={busy || !input.trim() || !cliId}
-              className="rounded-xl bg-brand p-2.5 text-brand-foreground transition-colors hover:bg-brand-200 disabled:opacity-40"
-              aria-label="Send message"
-            >
-              <Send className="size-4" />
-            </button>
-          </div>
-        </div>
+        <PromptBar
+          value={input}
+          onChange={setInput}
+          onSubmit={() => send()}
+          disabled={!cliId}
+          busy={busy}
+          placeholder={cliId ? "Ask anything…  (/evaluate, /scan, @cv.md)" : "Connect an AI tool first"}
+          cost="spend"
+          submitLabel="Send"
+          commands={[
+            { id: "evaluate", label: "evaluate", hint: "Score a job URL" },
+            { id: "scan", label: "scan", hint: "Free portal scan" },
+            { id: "followup", label: "followup", hint: "Who needs a nudge" },
+            { id: "pipeline", label: "pipeline", hint: "Pipeline status" },
+          ]}
+          onCommand={(id) => {
+            if (id === "scan") {
+              window.location.href = "/explore?run=1";
+              return;
+            }
+            if (id === "pipeline") {
+              window.location.href = "/pipeline";
+              return;
+            }
+            if (id === "followup") {
+              send("Who needs a follow-up today?");
+              return;
+            }
+            if (id === "evaluate") {
+              setInput("Evaluate this job URL: ");
+            }
+          }}
+          sources={["cv.md", "pipeline", "follow-ups", "profile"]}
+          onPickSource={(s) => setInput(`${input}${input && !input.endsWith(" ") ? " " : ""}@${s} `)}
+        />
         </div>
       </section>
     </div>

@@ -1,17 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { Sparkles } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
-import { CostBadge } from "@/components/cost/cost-badge";
+import { PromptBar } from "@/components/agent-ui/prompt-bar";
 
-// Auto-pipeline, one click: paste a job URL → fire a real evaluation worker
-// (the same kind:"evaluate" that runs modes/oferta.md + writes the A–F report +
-// tracker row). The worker pills + assistant cards show progress.
+/** Auto-pipeline via Prompt Bar (Beautiful UI #08). */
 export function QuickEvaluate() {
   const { startJob } = useJobs();
   const [url, setUrl] = useState("");
-  const [hint, setHint] = useState("");
+  const [hint, setHint] = useState<string | undefined>("Paste a job URL — evaluation runs on your own AI.");
 
   function run() {
     const u = url.trim();
@@ -25,33 +22,24 @@ export function QuickEvaluate() {
   }
 
   return (
-    <div className="mt-7">
-      <div className="flex max-w-xl items-center gap-2 rounded-full border border-border bg-surface/70 py-1.5 pl-4 pr-1.5 shadow-sm focus-within:border-brand/50">
-        <Sparkles className="size-4 shrink-0 text-brand/70" />
-        <input
-          value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            if (hint) setHint("");
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") run();
-          }}
-          placeholder="Paste a job URL to evaluate…"
-          className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-faint"
-        />
-        <button
-          onClick={run}
-          className="shrink-0 rounded-full bg-brand px-4 py-1.5 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
-        >
-          Evaluate
-        </button>
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <CostBadge kind="spend" size="xs" />
-        <span className="text-xs text-faint">Evaluation runs on your own AI — your key, your machine.</span>
-      </div>
-      {hint && <p className="mt-1 text-xs text-faint">{hint}</p>}
+    <div className="mt-7 max-w-xl">
+      <PromptBar
+        value={url}
+        onChange={setUrl}
+        onSubmit={run}
+        placeholder="Paste a job URL to evaluate…"
+        cost="spend"
+        hint={hint}
+        submitLabel="Evaluate"
+        commands={[
+          { id: "evaluate", label: "evaluate", hint: "Score a job URL" },
+          { id: "scan", label: "scan", hint: "Free portal scan" },
+        ]}
+        onCommand={(id) => {
+          if (id === "scan") window.location.href = "/explore?run=1";
+          if (id === "evaluate") setHint("Paste the URL, then hit Evaluate.");
+        }}
+      />
     </div>
   );
 }

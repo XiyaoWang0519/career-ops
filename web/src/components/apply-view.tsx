@@ -5,7 +5,12 @@ import type { ApplyIssue, DriveStep } from "@/lib/apply/issue";
 import { useApply } from "@/components/apply/apply-provider";
 import type { ApplyField } from "@/lib/apply/extract";
 import { cn } from "@/lib/cn";
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { DiffTable, type DiffCell } from "@/components/agent-ui/diff-table";
+import { LoadingState } from "@/components/agent-ui/loading-state";
+import { TaskRows } from "@/components/agent-ui/task-rows";
+import { ApprovalCard } from "@/components/agent-ui/approval-card";
+import { PromptBar } from "@/components/agent-ui/prompt-bar";
 
 // Co-located UI animations (HMR-proof vs Tailwind v4's stale globals.css):
 // field cascade-in, per-field "just drafted" flash, skeleton shimmer, hero orb.
@@ -30,25 +35,47 @@ const STYLE = `
 export function ApplyView() {
   const a = useApply();
   const [input, setInput] = useState("");
+  const [accepted, setAccepted] = useState<Record<string, boolean>>({});
+  const [fillChoice, setFillChoice] = useState<string | null>("fill");
+
+  const opening = a.status === "opening";
+  const driving = a.status === "driving";
+  const prefilling = a.status === "prefilling";
+  const filling = a.status === "filling";
+  const done = a.status === "done";
+  const busy = opening || driving;
+  const phase = busy ? 0 : prefilling ? 1 : 2;
+
+  const diffRows: DiffCell[] = useMemo(
+    () =>
+      a.fields
+        .filter((f) => (a.answers[f.id] ?? "").trim().length > 0)
+        .map((f) => ({
+          key: f.id,
+          label: f.label || f.id,
+          before: typeof f.value === "string" ? f.value : "",
+          after: a.answers[f.id] ?? "",
+          accepted: !!accepted[f.id],
+        })),
+    [a.fields, a.answers, accepted],
+  );
 
   if (a.status === "idle" || a.status === "error") {
     return (
       <div>
-        <div className="flex max-w-2xl items-center gap-2 rounded-full border border-border bg-surface/70 py-1.5 pl-4 pr-1.5 shadow-sm transition focus-within:border-brand/50 focus-within:shadow-md">
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && a.open(input.trim())}
-            placeholder="Paste an application form URL (Ashby, Lever, Greenhouse…)"
-            className="min-w-0 flex-1 bg-transparent py-1.5 text-sm outline-none placeholder:text-faint"
-          />
-          <button
-            onClick={() => a.open(input.trim())}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand px-4 py-1.5 text-sm font-medium text-brand-foreground transition-colors hover:bg-brand-200"
-          >
-            <Wand2 className="size-4" /> Read form
-          </button>
-        </div>
+        <PromptBar
+          value={input}
+          onChange={setInput}
+          onSubmit={() => a.open(input.trim())}
+          placeholder="Paste an application form URL (Ashby, Lever, Greenhouse…)"
+          cost={null}
+          hint="career-ops reads the form on your machine — it never submits."
+          submitLabel="Read form"
+          commands={[
+            { id: "apply", label: "apply", hint: "Open a form URL" },
+          ]}
+          onCommand={() => setInput("")}
+        />
         {a.error && (
           <div className="mt-4 max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3.5">
             <div className="flex items-start gap-2.5">
@@ -67,14 +94,6 @@ export function ApplyView() {
       </div>
     );
   }
-
-  const opening = a.status === "opening";
-  const driving = a.status === "driving";
-  const prefilling = a.status === "prefilling";
-  const filling = a.status === "filling";
-  const done = a.status === "done";
-  const busy = opening || driving;
-  const phase = busy ? 0 : prefilling ? 1 : 2;
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -95,6 +114,9 @@ export function ApplyView() {
       {/* opening: big magic hero + skeleton fields (no layout jump when real ones arrive) */}
       {opening && (
         <>
+          <div className="mb-4 flex justify-center">
+            <LoadingState label="Reading form" />
+          </div>
           <ProcessingHero title="Reading your form…" subtitle="Opening the real application on your machine and reading every field." />
           <FieldSkeleton />
         </>
@@ -147,16 +169,38 @@ export function ApplyView() {
                 <span className="ml-auto text-faint">{a.prefillLog.length} steps</span>
               </summary>
               <div className="max-h-52 overflow-y-auto border-t border-border px-3 py-2">
-                <ol className="space-y-0.5 font-mono text-[11px] leading-relaxed text-muted">
-                  {a.prefillLog.map((l, i) => (
-                    <li key={i} className={l.startsWith("✗") ? "text-amber-600 dark:text-amber-400" : ""}>
-                      {l}
-                    </li>
-                  ))}
-                  {prefilling && <li className="text-faint">…</li>}
-                </ol>
+                <TaskRows
+                  dense
+                  items={a.prefillLog.slice(-12).map((l, i) => ({
+                    id: `pf-${i}`,
+                    title: l.replace(/^[✗✓]\s*/, "").slice(0, 80),
+                    status: l.startsWith("✗") ? "error" : prefilling && i === a.prefillLog.length - 1 ? "running" : "done",
+                  }))}
+                />
               </div>
             </details>
+          )}
+
+          {diffRows.length > 0 && !busy && (
+            <DiffTable
+              className="mb-4"
+              title="Proposed answers from your CV"
+              rows={diffRows}
+              onAccept={(key) => setAccepted((m) => ({ ...m, [key]: true }))}
+              onReject={(key) => {
+                a.setAnswer(key, "");
+                setAccepted((m) => {
+                  const next = { ...m };
+                  delete next[key];
+                  return next;
+                });
+              }}
+              onAcceptAll={() => {
+                const all: Record<string, boolean> = {};
+                for (const r of diffRows) all[r.key] = true;
+                setAccepted(all);
+              }}
+            />
           )}
 
           {/* the questions — float on the blurred form image, cascade in, each
@@ -176,23 +220,22 @@ export function ApplyView() {
             ))}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            <button
-              onClick={a.fill}
-              disabled={filling || prefilling}
-              className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground shadow-lg shadow-brand/25 transition-all hover:bg-brand-200 hover:shadow-brand/40 disabled:opacity-50"
-            >
-              {filling ? <Loader2 className="size-4 animate-spin" /> : <ArrowUpRight className="size-4" />}
-              {filling ? "Filling the real form…" : "Fill the real form & review"}
-            </button>
-            <button
-              onClick={a.agentFill}
-              disabled={filling || prefilling}
-              title="Let the AI drive the real form and fill it field-by-field (for tricky / multi-step forms). It never submits."
-              className="inline-flex items-center gap-1.5 rounded-full border border-border px-4 py-2.5 text-sm font-medium text-muted transition-colors hover:border-brand/40 hover:text-brand disabled:opacity-50"
-            >
-              <MousePointerClick className="size-4" /> Let the AI fill it
-            </button>
+          <div className="mt-5 space-y-3">
+            <ApprovalCard
+              question="Ready to fill the real form?"
+              options={[
+                { id: "fill", label: "Fill the real form & review", hint: "Writes answers into the live form. You still click Submit." },
+                { id: "agent", label: "Let the AI fill it field-by-field", hint: "For tricky / multi-step forms. Never submits." },
+              ]}
+              value={fillChoice}
+              onChange={setFillChoice}
+              busy={filling || prefilling}
+              confirmLabel={filling ? "Filling…" : "Go"}
+              onConfirm={() => {
+                if (fillChoice === "agent") a.agentFill();
+                else a.fill();
+              }}
+            />
             <p className="inline-flex items-center gap-1.5 text-xs text-muted">
               <ShieldCheck className="size-3.5 text-emerald-500" /> Never submits — you click Submit yourself.
             </p>

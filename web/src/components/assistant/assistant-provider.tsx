@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Send, X, Loader2, Settings, RotateCcw, ArrowUpRight, Sparkles } from "lucide-react";
+import { X, Settings, RotateCcw, ArrowUpRight, Sparkles } from "lucide-react";
 import { CoMark } from "@/components/co-mark";
 import { useJobs } from "@/components/jobs/job-store";
 import { usePipeline } from "@/components/pipeline/pipeline-provider";
@@ -20,10 +20,10 @@ import { cn } from "@/lib/cn";
 import { resolveClientCliId } from "@/lib/client-cli";
 import { useRuntime } from "@/components/runtime-provider";
 import { Button } from "@/components/ui/button";
-import { ThinkingOrb } from "thinking-orbs";
 import { stripLegacyCodexDiagnostics } from "@/lib/codex-stream.mjs";
 import { explicitApplyUrl } from "@/lib/apply-intent.mjs";
 import { ThinkingStatus, type AssistantProgress } from "@/components/assistant/thinking-status";
+import { PromptBar } from "@/components/agent-ui/prompt-bar";
 import {
   assistantProgressForReasoning,
   assistantProgressForTool,
@@ -974,30 +974,36 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           )}
 
           <div className="border-t border-border p-3">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
-                rows={1}
-                disabled={!cliId}
-                className="max-h-32 flex-1 resize-none rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/50 disabled:opacity-50"
-              />
-              <button
-                onClick={() => send()}
-                disabled={busy || !input.trim() || !cliId}
-                className="rounded-xl bg-brand p-2 text-brand-foreground transition-colors hover:bg-brand-200 disabled:opacity-40"
-                aria-label="Send"
-              >
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </button>
-            </div>
+            <PromptBar
+              value={input}
+              onChange={setInput}
+              onSubmit={() => send()}
+              disabled={!cliId}
+              busy={busy}
+              placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
+              cost="spend"
+              submitLabel="Send"
+              commands={[
+                { id: "evaluate", label: "evaluate", hint: "Score a job URL" },
+                { id: "scan", label: "scan", hint: "Free portal scan" },
+                { id: "pipeline", label: "pipeline", hint: "Open pipeline" },
+              ]}
+              onCommand={(id) => {
+                if (id === "scan") {
+                  setOpen(false);
+                  window.location.href = "/explore?run=1";
+                  return;
+                }
+                if (id === "pipeline") {
+                  setOpen(false);
+                  window.location.href = "/pipeline";
+                  return;
+                }
+                if (id === "evaluate") setInput("Evaluate this job URL: ");
+              }}
+              sources={["cv.md", "pipeline", "profile"]}
+              onPickSource={(s) => setInput(`${input}${input && !input.endsWith(" ") ? " " : ""}@${s} `)}
+            />
           </div>
           </div>
           <button
