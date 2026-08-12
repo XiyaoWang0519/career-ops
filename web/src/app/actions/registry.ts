@@ -18,7 +18,7 @@ export const BATCH_CAP = 12; // hard ceiling on a single fan-out
 const CANON_STATUS = ["Evaluated", "Applied", "Responded", "Interview", "Offer", "Hired", "Rejected", "Discarded", "SKIP"];
 
 const TAB_VALUES = [
-  "INBOX", "ALL", "EVALUATED", "APPLIED", "RESPONDED", "INTERVIEW", "OFFER", "HIRED", "REJECTED", "DISCARDED", "SKIP",
+  "INBOX", "REVIEW", "ACTIVE", "CLOSED", "ALL", "EVALUATED", "APPLIED", "RESPONDED", "INTERVIEW", "OFFER", "HIRED", "REJECTED", "DISCARDED", "SKIP",
 ] as const;
 const SORT_VALUES = ["company", "role", "score", "status", "date"] as const;
 
@@ -126,6 +126,8 @@ const ACTIONS: Record<string, ActionDef> = {
       if ((TAB_VALUES as readonly string[]).includes(tab)) sp.set("tab", tab);
       const min = typeof raw.min === "number" ? raw.min : parseFloat(String(raw.min ?? ""));
       if (Number.isFinite(min) && min >= 0 && min <= 5) sp.set("min", String(min));
+      const max = typeof raw.max === "number" ? raw.max : parseFloat(String(raw.max ?? ""));
+      if (Number.isFinite(max) && max >= 0 && max <= 5) sp.set("max", String(max));
       if (isStr(raw.q)) sp.set("q", String(raw.q).slice(0, 80));
       const sort = typeof raw.sort === "string" ? raw.sort : "";
       if ((SORT_VALUES as readonly string[]).includes(sort)) sp.set("sort", sort);

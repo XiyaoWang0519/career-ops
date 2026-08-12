@@ -69,8 +69,19 @@ function sanitizeAssistantMessage(message: Msg): Msg {
 }
 
 function sanitizeAssistantMessages(messages: Msg[]): Msg[] {
-  const sanitized = messages.map(sanitizeAssistantMessage);
-  return sanitized.some((message, index) => message !== messages[index]) ? sanitized : messages;
+  const sanitized = messages
+    .map(sanitizeAssistantMessage)
+    .filter(
+      (message) =>
+        message.role !== "assistant" ||
+        message.parts.length !== 1 ||
+        !message.parts.some(
+          (part) => part.type === "text" && part.text.startsWith("Hi — I'm your career-ops assistant."),
+        ),
+    );
+  return sanitized.length !== messages.length || sanitized.some((message, index) => message !== messages[index])
+    ? sanitized
+    : messages;
 }
 
 function restoreBrowserLaunches(messages: Msg[]): Msg[] {
@@ -102,9 +113,6 @@ const MIN_PROGRESS_DISPLAY_MS = 600;
 // back-compat shims — the old directives still work, mapped onto the registry
 const NAV_RE = /<<\s*go:\s*(\/[a-z0-9/_-]*)\s*>>/gi;
 const REMEMBER_RE = /<<\s*remember:\s*([^>]+?)\s*>>/gi;
-
-const GREETING =
-  "Hi — I'm your career-ops assistant. I can walk you through onboarding, answer questions about your pipeline, or take you where you need to go. What would you like to do?";
 
 // ── envelope parsing: act ONLY on complete <<act:ID {json}>> envelopes ────────
 function codeRanges(s: string): [number, number][] {
@@ -249,7 +257,7 @@ function restoreChatHistory(raw: unknown): StoredChatHistory | null {
       return {
         id: candidate.id,
         title: typeof candidate.title === "string" && candidate.title.trim() ? candidate.title : titleForMessages(messages),
-        messages: restoreBrowserLaunches(messages),
+        messages: restoreBrowserLaunches(sanitizeAssistantMessages(messages)),
         createdAt,
         updatedAt,
       };
@@ -357,7 +365,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         const thread: ChatThread = {
           id: createThreadId(),
           title: titleForMessages(legacyMessages ?? []),
-          messages: restoreBrowserLaunches(legacyMessages ?? []),
+          messages: restoreBrowserLaunches(sanitizeAssistantMessages(legacyMessages ?? [])),
           createdAt: now,
           updatedAt: now,
         };
@@ -396,7 +404,22 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       setOpen(true);
       setMessages((ms) => [...ms, { role: "assistant", parts: [{ type: "text", text: `Opening ${detail.company ? `${detail.company}'s` : "the"} application in a live browser…` }] }]);
       void applyRef.current.open(detail.url, { prefill: true, company: detail.company }).then((sessionId) => {
-        if (sessionId) appendParts([{ type: "browser", sessionId, url: detail.url }]);
+        if (sessionId) {
+          setMessages((messages) => patchLastAssistant(messages, (message) => ({
+            ...message,
+            parts: message.parts.map((part) => part.type === "text" && /^Opening .*application/i.test(part.text)
+              ? { ...part, text: "Application browser ready. Review every answer and submit it yourself when you’re satisfied." }
+              : part),
+          })));
+          appendParts([{ type: "browser", sessionId, url: detail.url }]);
+        } else {
+          setMessages((messages) => patchLastAssistant(messages, (message) => ({
+            ...message,
+            parts: message.parts.map((part) => part.type === "text" && /^Opening .*application/i.test(part.text)
+              ? { ...part, text: "I couldn’t open the application form. You can retry here or open the original posting directly; nothing was submitted." }
+              : part),
+          })));
+        }
       });
     }
     window.addEventListener("co-assistant-apply", onApply);
@@ -438,10 +461,6 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       /* localStorage unavailable or full */
     }
   }, [activeThreadId, threads]);
-
-  useEffect(() => {
-    if (open && messages.length === 0) setMessages([{ role: "assistant", parts: [{ type: "text", text: GREETING }] }]);
-  }, [open, messages.length]);
 
   // Dock panel owns scrollRef; keep it pinned to the latest message while open.
   // On /chat the dock is unmounted (ref is null) and the page scrolls itself.
@@ -593,7 +612,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     const text = (forced ?? input).trim();
     if (!text || busy || !cliId) return;
     if (forced === undefined) setInput("");
-    const history = messages.filter((m) => msgText(m) && msgText(m) !== GREETING).map((m) => ({ role: m.role, content: msgText(m) }));
+    const history = messages.filter((m) => msgText(m)).map((m) => ({ role: m.role, content: msgText(m) }));
     setMessages((m) => [...m, { role: "user", parts: [{ type: "text", text }] }, { role: "assistant", parts: [{ type: "text", text: "" }] }]);
     setBusy(true);
     setProgress(null);
@@ -896,7 +915,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   return (
     <AssistantContext.Provider value={value}>
       {children}
-      {pathname !== "/chat" && (
+      {pathname !== "/chat" && open && (
         <div className={cn("t-morph co-assistant-morph", hasBrowser && "has-browser")} data-open={String(open)}>
           <div className="t-morph-menu flex flex-col" inert={!open} aria-hidden={!open} role="dialog" aria-modal="true" aria-label="Assistant">
           <header className="flex items-center gap-2.5 border-b border-border px-4 py-3">
@@ -1000,18 +1019,6 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
             </div>
           </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            className="t-morph-plus flex items-center justify-center gap-2 bg-surface/90 py-1.5 pl-1.5 pr-4 backdrop-blur hover:bg-surface-hover max-sm:min-h-[44px]"
-            aria-label="Open assistant"
-            aria-expanded={open}
-            aria-hidden={open}
-            tabIndex={open ? -1 : 0}
-          >
-            <CoMark size={26} />
-            <span className="text-sm font-medium">Ask</span>
-          </button>
         </div>
       )}
     </AssistantContext.Provider>

@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // PDF.js resolves its Node worker relative to its own package. Bundling it
+  // into .next/server/chunks moves pdf.mjs without pdf.worker.mjs, causing every
+  // server-side PDF upload to fail with "Setting up fake worker failed".
+  serverExternalPackages: ["pdfjs-dist"],
   // Two lockfiles exist on purpose (repo root + web/), so Next would infer the
   // repo root as the workspace root. On Windows that misinference can send
   // Turbopack's postcss workers into an unbounded respawn loop that exhausts

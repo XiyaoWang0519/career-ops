@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { CoMark } from "@/components/co-mark";
@@ -12,7 +13,6 @@ import { PipelineProvider } from "@/components/pipeline/pipeline-provider";
 import { ApplyProvider } from "@/components/apply/apply-provider";
 import { ExploreProvider } from "@/components/explore/explore-provider";
 import { FirstScoreView } from "@/components/explore/first-score-view";
-import { BetaBanner } from "@/components/beta/beta-banner";
 import { WorkerPills } from "@/components/jobs/worker-pills";
 import { UsageMeter } from "@/components/usage-meter";
 import { RuntimeProvider, useRuntime } from "@/components/runtime-provider";
@@ -36,11 +36,14 @@ function ShellChrome({ children }: { children: React.ReactNode }) {
             </span>
           </Link>
           <nav className="flex flex-col gap-1">
-            {items.map(({ href, label, icon: Icon, chip }) => {
+            {items.map(({ href, label, icon: Icon, chip, group }, index) => {
               const active = isActivePath(href, pathname);
               return (
+                <Fragment key={href}>
+                {(index === 0 || items[index - 1].group !== group) && (
+                  <p className={cn("px-3 pb-1 pt-4 font-mono text-[9px] uppercase tracking-[0.18em] text-faint", index === 0 && "pt-0")}>{group}</p>
+                )}
                 <Link
-                  key={href}
                   href={href}
                   className={cn(
                     "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
@@ -57,6 +60,7 @@ function ShellChrome({ children }: { children: React.ReactNode }) {
                     </span>
                   )}
                 </Link>
+                </Fragment>
               );
             })}
           </nav>
@@ -73,7 +77,6 @@ function ShellChrome({ children }: { children: React.ReactNode }) {
         </aside>
         <main className="flex-1 overflow-x-hidden">{children}</main>
         <FirstScoreView />
-        <BetaBanner />
       </div>
     </>
   );

@@ -88,21 +88,23 @@ export function WorkerCard({
   const hasScore = job.result?.score != null;
   const authError = isAuthError(job);
   const tokens = job.status === "done" ? job.cost?.tokens ?? 0 : 0;
+  const costLabel = job.cost?.usd != null
+    ? `$${job.cost.usd.toFixed(2)}`
+    : job.cost?.billing === "plan"
+      ? "included in plan"
+      : "cost n/a";
 
   return (
     <div className={cn(inline && "rounded-xl border border-border bg-surface/60 p-2.5")}>
       <div className="flex items-center gap-2">
-        <span className="t-icon-swap shrink-0" data-state={running ? "a" : "b"}>
-          <span className="t-icon" data-icon="a">
+        <span className="grid size-5 shrink-0 place-items-center">
+          {running ? (
             <ThinkingOrb state="working" size={20} aria-label="Worker is running" />
-          </span>
-          <span className="t-icon" data-icon="b" aria-hidden={running}>
-            {job.status === "error" ? (
-              <AlertTriangle className={cn("size-3", tone.icon)} />
-            ) : (
-              <Check className={cn("size-3", tone.icon)} />
-            )}
-          </span>
+          ) : job.status === "error" ? (
+            <AlertTriangle className={cn("size-3", tone.icon)} aria-label="Worker failed" />
+          ) : (
+            <Check className={cn("size-3", tone.icon)} aria-label="Worker finished" />
+          )}
         </span>
         <span className={cn("truncate font-medium", inline ? "text-sm" : "text-xs")}>{job.title}</span>
         {hasScore && (
@@ -139,7 +141,7 @@ export function WorkerCard({
       )}
       {tokens > 0 && (
         <div className={cn("mt-1 text-faint tabular-nums", inline ? "text-xs" : "text-[10px]")}>
-          {fmtTokens(tokens)} tokens{job.cost?.usd != null ? ` · $${job.cost.usd.toFixed(2)}` : ""}
+          {fmtTokens(tokens)} tokens · {costLabel}
         </div>
       )}
     </div>

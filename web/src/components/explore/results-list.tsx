@@ -71,7 +71,7 @@ export function ResultsList({ offers }: { offers: EnrichedOffer[] }) {
               onClick={() => addToPipeline(addable)}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface/40 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-brand-soft hover:text-brand"
             >
-              <Plus className="size-3.5" /> Add all {addable.length}
+              <Plus className="size-3.5" /> Save all {addable.length} for review
             </button>
           )}
         </div>

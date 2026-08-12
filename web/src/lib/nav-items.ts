@@ -10,19 +10,20 @@ export type NavItem = {
   chip?: string;
   /** Hidden when CAREER_OPS_SIMPLE=1 (friend-ready trimmed nav). */
   advanced?: boolean;
+  group: "Work" | "Manage" | "Learn" | "System";
 };
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/chat", label: "Assistant", icon: MessageCircle },
-  { href: "/", label: "Today", icon: LayoutDashboard },
-  { href: "/explore", label: "Explore", icon: Compass, chip: "New" },
-  { href: "/pipeline", label: "Pipeline", icon: ListChecks },
-  { href: "/followups", label: "Follow-ups", icon: Send },
-  { href: "/jobs", label: "Activity", icon: Activity },
-  { href: "/portals", label: "Portals", icon: Radar, advanced: true },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/cv", label: "CV", icon: FileText },
-  { href: "/config", label: "Config", icon: Settings, advanced: true },
+  { href: "/", label: "Today", icon: LayoutDashboard, group: "Work" },
+  { href: "/explore", label: "Find roles", icon: Compass, chip: "New", group: "Work" },
+  { href: "/pipeline", label: "Opportunities", icon: ListChecks, group: "Work" },
+  { href: "/followups", label: "Conversations", icon: Send, group: "Manage" },
+  { href: "/jobs", label: "Activity", icon: Activity, group: "Manage" },
+  { href: "/chat", label: "Assistant", icon: MessageCircle, group: "Manage" },
+  { href: "/analytics", label: "Insights", icon: BarChart3, group: "Learn" },
+  { href: "/cv", label: "Career profile", icon: FileText, group: "Learn" },
+  { href: "/portals", label: "Sources", icon: Radar, advanced: true, group: "System" },
+  { href: "/config", label: "Settings", icon: Settings, advanced: true, group: "System" },
 ];
 
 /** Nav items visible for the current mode. `simple` hides advanced entries. */

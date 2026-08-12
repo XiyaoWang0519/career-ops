@@ -25,7 +25,7 @@ export function FirstRunHome() {
             Drop your CV. See who&apos;s hiring you in 60 seconds.
           </h1>
           <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-muted">
-            No account. No setup. Your CV is parsed once on your own AI, then we scan the live job market for roles
+            No account. No profile setup. Your CV is parsed once on your own AI, then we scan the live job market for roles
             that fit you — <span className="text-foreground">that part&apos;s free</span>. You only spend tokens again
             when you choose to score a role.
           </p>

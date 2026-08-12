@@ -6,19 +6,23 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowLeft, Loader2, Wrench, CircleDot, Check, X } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
+import { usePipeline } from "@/components/pipeline/pipeline-provider";
 import { HeroGlow } from "@/components/hero-glow";
 import { Badge } from "@/components/ui/badge";
+import { relatedApplicationForJob } from "@/lib/opportunity";
 
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { jobs } = useJobs();
+  const { applications } = usePipeline();
   const job = jobs.find((j) => j.id === id);
+  const related = job ? relatedApplicationForJob(job, applications) : null;
 
   if (!job) {
     return (
       <div className="mx-auto max-w-3xl px-6 py-10">
-        <Link href="/pipeline" className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand">
-          <ArrowLeft className="size-4" /> Pipeline
+        <Link href="/jobs" className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand">
+          <ArrowLeft className="size-4" /> Activity
         </Link>
         <p className="mt-8 text-sm text-muted">
           This worker is no longer in memory (it finished earlier or the page was reloaded).
@@ -29,8 +33,8 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <Link href="/pipeline" className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand">
-        <ArrowLeft className="size-4" /> Pipeline
+      <Link href={related ? `/pipeline/${related.n}` : "/jobs"} className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand">
+        <ArrowLeft className="size-4" /> {related ? `${related.company} opportunity` : "Activity"}
       </Link>
 
       <section className="dot-bg relative mt-5 overflow-hidden rounded-2xl border border-border bg-surface/40 px-6 py-7">

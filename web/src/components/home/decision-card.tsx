@@ -2,25 +2,27 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, X, FileText, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, X, FileText, Loader2, Send } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { CompanyLogo } from "@/components/company-logo";
 import { scoreNum, scoreTone } from "@/lib/format";
-import type { Application } from "@/lib/career-ops";
+import type { OpportunityView } from "@/lib/opportunity";
 
-// Awaiting-decision row: a scored role with no terminal status. One-tap Apply /
-// Skip writes back through the EXISTING /api/status (UPDATE-only, canonical states).
-export function DecisionCard({ app }: { app: Application }) {
+// Awaiting-decision row: the primary action continues the real workflow. A role is
+// never marked Applied until the user confirms that the external submission happened.
+export function DecisionCard({ opportunity: app }: { opportunity: OpportunityView }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<"" | "Applied" | "Discarded">("");
+  const [busy, setBusy] = useState<"" | "Discarded">("");
   const [done, setDone] = useState<string | null>(null);
-  const score = scoreNum(app.score);
-  const tone = scoreTone(app.score);
+  const scoreText = app.score == null ? "" : `${app.score}/5`;
+  const score = scoreNum(scoreText);
+  const tone = scoreTone(scoreText);
 
-  const setStatus = async (status: "Applied" | "Discarded") => {
+  const setStatus = async (status: "Discarded") => {
     setBusy(status);
     try {
-      await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: app.n, status }) });
+      await fetch("/api/status", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ n: app.id, status }) });
       setDone(status);
       router.refresh();
     } catch {
@@ -47,7 +49,7 @@ export function DecisionCard({ app }: { app: Application }) {
               tone === "good" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : tone === "warn" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" : "bg-surface-hover text-muted",
             )}
           >
-            {app.score}
+            {scoreText}
           </span>
         )}
       </div>
@@ -56,14 +58,20 @@ export function DecisionCard({ app }: { app: Application }) {
             affirmative primary — a queue of these reads as gentle brand, not 6
             solid shouts (P5), while staying visibly the positive action next to
             the neutral Skip even on touch (no hover). */}
-        <button
-          type="button"
-          disabled={!!busy}
-          onClick={() => setStatus("Applied")}
-          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand-text transition hover:bg-brand/15 disabled:opacity-60 max-sm:min-h-[44px]"
-        >
-          {busy === "Applied" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Mark applied
-        </button>
+        {app.nextAction.id === "start-application" && app.url ? (
+          <button
+            type="button"
+            disabled={!!busy}
+            onClick={() => window.dispatchEvent(new CustomEvent("co-assistant-apply", { detail: { url: app.url, company: app.company } }))}
+            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand-text transition hover:bg-brand/15 disabled:opacity-60 max-sm:min-h-[44px]"
+          >
+            <Send className="size-3.5" /> Start application
+          </button>
+        ) : (
+          <Link href={`/pipeline/${app.id}#opportunity-workspace-title`} className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-brand-soft px-2.5 py-1.5 text-xs font-medium text-brand-text transition hover:bg-brand/15 max-sm:min-h-[44px]">
+            {app.nextAction.label} <ArrowRight className="size-3.5" />
+          </Link>
+        )}
         <button
           type="button"
           disabled={!!busy}
@@ -72,7 +80,7 @@ export function DecisionCard({ app }: { app: Application }) {
         >
           {busy === "Discarded" ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />} Skip
         </button>
-        <a href={`/pipeline/${app.n}`} title="Open report" aria-label="Open report" className="inline-flex shrink-0 items-center justify-center rounded p-1.5 text-faint transition hover:text-brand max-sm:min-h-[44px] max-sm:min-w-[44px]">
+        <a href={`/pipeline/${app.id}`} title="Open opportunity" aria-label="Open opportunity" className="inline-flex shrink-0 items-center justify-center rounded p-1.5 text-faint transition hover:text-brand max-sm:min-h-[44px] max-sm:min-w-[44px]">
           <FileText className="size-4" />
         </a>
       </div>

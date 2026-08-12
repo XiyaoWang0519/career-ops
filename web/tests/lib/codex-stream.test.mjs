@@ -107,7 +107,17 @@ test("turn.completed usage → tokens", () => {
     }),
   );
   assert.equal(evs[0].type, "tokens");
-  assert.equal(evs[0].tokens, 175);
+  assert.equal(evs[0].tokens, 120);
+});
+
+test("turn.completed prefers an explicit total without double-counting details", () => {
+  const evs = parseCodexLine(
+    JSON.stringify({
+      type: "turn.completed",
+      usage: { input_tokens: 100, cached_input_tokens: 50, output_tokens: 20, reasoning_output_tokens: 5, total_tokens: 119 },
+    }),
+  );
+  assert.equal(evs[0].tokens, 119);
 });
 
 test("turn.failed / error → error events", () => {

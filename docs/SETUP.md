@@ -68,6 +68,21 @@ PDFs are rendered with a headless Chromium. Install it once per machine:
 npx playwright install chromium
 ```
 
+### Web app / friend-ready deployment
+
+Use the fail-closed setup command instead of copying `node_modules` between
+machines:
+
+```bash
+npm run setup:web
+```
+
+It installs both lockfiles, installs the managed Chromium build, and verifies
+that PDF parsing, Chromium launch, the writable career-ops root, and an AI CLI
+all work. The web app repeats the relevant checks automatically before
+development, production builds, and production starts. PDF uploads use the
+bundled PDF.js parser; Poppler/`pdftotext` is not a host prerequisite.
+
 ## Available Commands
 
 | Action | How |

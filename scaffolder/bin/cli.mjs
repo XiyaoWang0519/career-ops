@@ -32,7 +32,8 @@ const SUPPORTED_CLIS = [
 const USAGE = `career-ops — set up an AI job search workspace.
 
 Usage:
-  npx career-ops init [folder]    Create a new workspace (default: ./career-ops)
+  npx career-ops init [folder]        Create a core workspace (default: ./career-ops)
+  npx career-ops init [folder] --web  Include and verify the friend-ready web runtime
 
 After setup, open your AI coding tool inside the folder and paste a job offer.
 Docs: https://github.com/santifer/career-ops`;
@@ -84,13 +85,25 @@ async function latestTag() {
 }
 
 async function main() {
-  const [cmd, dirArg] = process.argv.slice(2);
+  const [cmd, ...args] = process.argv.slice(2);
+  const withWeb = args.includes("--web");
+  const unknownFlag = args.find((arg) => arg.startsWith("-") && arg !== "--web");
+  if (unknownFlag) die(`Unknown option "${unknownFlag}".\n${USAGE}`);
+  const dirArgs = args.filter((arg) => !arg.startsWith("-"));
+  if (dirArgs.length > 1) die(`Too many target folders.\n${USAGE}`);
+  const dirArg = dirArgs[0];
 
   if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(USAGE);
     process.exit(cmd ? 0 : 1);
   }
   if (cmd !== "init") die(`Unknown command "${cmd}".\n${USAGE}`);
+  if (withWeb) {
+    const [major, minor] = process.versions.node.split(".").map(Number);
+    if (major < 20 || (major === 20 && minor < 16)) {
+      die(`The web runtime requires Node.js 20.16+ (found ${process.versions.node}). Install Node.js 22 LTS or newer and retry.`);
+    }
+  }
 
   const target = dirArg || "career-ops";
   if (existsSync(target) && readdirSync(target).length > 0) {
@@ -114,12 +127,30 @@ async function main() {
     die("git clone failed. Check your network connection and try again.");
   }
 
-  // 2. Install dependencies.
-  console.log("\n→ Installing dependencies (npm install) ...");
+  // 2. Install every managed dependency. Installation is fail-closed: printing
+  // "ready" after a partial install only moves the failure to the user's first
+  // PDF upload or browser action, where it is much harder to diagnose.
+  console.log("\n→ Installing core dependencies ...");
   try {
-    execFileSync(NPM, ["install"], { cwd: target, stdio: "inherit" });
+    execFileSync(NPM, ["ci"], { cwd: target, stdio: "inherit" });
   } catch {
-    console.warn('\n! npm install failed — you can re-run it manually later with "npm install".');
+    die(`Core dependency installation failed in ${display}. Fix the npm error above, then run "npm ci" there.`);
+  }
+
+  if (withWeb) {
+    console.log("\n→ Installing web dependencies and managed browser ...");
+    try {
+      execFileSync(NPM, ["--prefix", "web", "ci"], { cwd: target, stdio: "inherit" });
+    } catch {
+      die(`Web dependency installation failed in ${display}. Fix the npm error above, then run "npm --prefix web ci" there.`);
+    }
+
+    console.log("\n→ Verifying the installed runtime ...");
+    try {
+      execFileSync(NPM, ["--prefix", "web", "run", "check:install"], { cwd: target, stdio: "inherit" });
+    } catch {
+      die(`Dependency verification failed in ${display}. Fix the reported issue before sharing or deploying this checkout.`);
+    }
   }
 
   // 2b. Bootstrap CLI skill entrypoints (covers CLIs added after the cloned release).
@@ -148,8 +179,11 @@ async function main() {
   console.log("\nOn first launch it walks you through setup — your CV, profile and target");
   console.log("roles — just by chatting. Nothing to configure by hand.");
   console.log("\ncareer-ops is AI-agnostic — Claude Code, Codex, Qwen, OpenCode, Copilot, Antigravity and Grok all work.");
-  console.log("\nOptional (for PDF generation):");
-  console.log("  npx playwright install chromium\n");
+  if (withWeb) {
+    console.log("\nAll managed dependencies (including PDF parsing and Chromium) were installed and launch-checked.\n");
+  } else {
+    console.log("\nFor a friend-ready web bundle, rerun the installer with --web or run `npm run setup:web` in this workspace.\n");
+  }
 }
 
 main().catch((err) => die(err?.message || String(err)));

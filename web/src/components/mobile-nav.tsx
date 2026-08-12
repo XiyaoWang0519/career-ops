@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
@@ -126,15 +126,15 @@ export function MobileNav() {
         </div>
       </header>
 
-      <div className={cn("co-mscrim md:hidden", open && "open")} onClick={() => setOpen(false)} aria-hidden />
+      {open && <>
+      <div className="co-mscrim open md:hidden" onClick={() => setOpen(false)} aria-hidden />
 
       <aside
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Navigation menu"
-        inert={!open}
-        data-open={String(open)}
+        data-open="true"
         className="t-panel-slide co-mdrawer border-l border-border bg-surface md:hidden"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -153,11 +153,14 @@ export function MobileNav() {
         </div>
 
         <nav className="flex flex-col gap-1 px-3">
-          {items.map(({ href, label, icon: Icon, chip }) => {
+          {items.map(({ href, label, icon: Icon, chip, group }, index) => {
             const active = isActivePath(href, pathname);
             return (
+              <Fragment key={href}>
+              {(index === 0 || items[index - 1].group !== group) && (
+                <p className={cn("px-3 pb-1 pt-4 font-mono text-[9px] uppercase tracking-[0.18em] text-faint", index === 0 && "pt-0")}>{group}</p>
+              )}
               <Link
-                key={href}
                 href={href}
                 onClick={() => setOpen(false)}
                 aria-current={active ? "page" : undefined}
@@ -174,6 +177,7 @@ export function MobileNav() {
                   </span>
                 )}
               </Link>
+              </Fragment>
             );
           })}
         </nav>
@@ -190,6 +194,7 @@ export function MobileNav() {
           </div>
         </div>
       </aside>
+      </>}
     </>
   );
 }

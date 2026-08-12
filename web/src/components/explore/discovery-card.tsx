@@ -136,7 +136,7 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
               )}
             >
               {isAdding ? <Loader2 className="size-3.5 animate-spin" /> : isAdded ? <Check className="size-3.5" /> : <Plus className="size-3.5" />}
-              {isAdded ? "In pipeline" : "Add to pipeline"}
+              {isAdded ? "In Opportunities" : "Save for review"}
             </button>
             <button
               type="button"

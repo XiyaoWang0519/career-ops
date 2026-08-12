@@ -20,7 +20,7 @@ export type Job = {
   steps: JobStep[];
   text: string;
   result?: JobResult;
-  cost?: { tokens: number; usd?: number }; // per-run token cost (Claude result event) — local only
+  cost?: { tokens: number; usd?: number; billing?: "plan" | "metered" | "unknown" };
   startedAt: number;
   endedAt?: number;
 };
@@ -154,10 +154,13 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
         let verdictLine = ""; // latched separately so the 8000-char tail can't drop it
         let doneTokens = 0; // per-run token cost, forwarded on the done event (#6)
         let doneCostUsd: number | null = null;
+        let doneBilling: "plan" | "metered" | "unknown" | undefined;
         const steps: JobStep[] = [];
         const finish = (status: "done" | "error", lastLabel?: string) => {
           const result = status === "done" ? parseVerdict(verdictLine || text) : undefined;
-          const cost = status === "done" && doneTokens > 0 ? { tokens: doneTokens, usd: doneCostUsd ?? undefined } : undefined;
+          const cost = status === "done" && doneTokens > 0
+            ? { tokens: doneTokens, usd: doneCostUsd ?? undefined, billing: doneBilling }
+            : undefined;
           patch(id, (j) => ({
             ...j,
             status,
@@ -171,7 +174,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
             fetch("/api/runs/save", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ id, title: opts.title, subtitle: opts.subtitle, page: opts.page, input: opts.input, result, cost, steps, output: text }),
+              body: JSON.stringify({ id, title: opts.title, subtitle: opts.subtitle, kind: opts.kind, page: opts.page, input: opts.input, result, cost, steps, output: text }),
             }).catch(() => {});
             // Tell server-snapshot surfaces (Today, pipeline) to refetch — the
             // worker just wrote a real tracker row / report they don't yet see.
@@ -222,6 +225,7 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
                   // finish happens on stream-close; capture the per-run cost it carries
                   if (typeof ev.tokens === "number") doneTokens = ev.tokens;
                   if (typeof ev.costUsd === "number") doneCostUsd = ev.costUsd;
+                  if (ev.billing === "plan" || ev.billing === "metered" || ev.billing === "unknown") doneBilling = ev.billing;
                 } else if (ev.type === "error") {
                   finish("error", ev.msg || "Error");
                   return;

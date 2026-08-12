@@ -3,10 +3,21 @@
   "version": "0.6.0",
   "private": true,
   "description": "Official web experience for career-ops — local-first.",
+  "engines": {
+    "node": ">=20.16.0"
+  },
   "scripts": {
+    "postinstall": "node scripts/install-runtime.mjs",
+    "install:runtime": "node scripts/install-runtime.mjs",
+    "check:build": "node scripts/check-runtime.mjs",
+    "check:install": "node scripts/check-runtime.mjs --install",
+    "check:runtime": "node scripts/check-runtime.mjs --runtime",
+    "predev": "npm run check:runtime",
     "dev": "next dev",
     "refine": "REFINE_AGENT_CMD='codex exec --model gpt-5.6-sol -c model_reasoning_effort=\"high\" -c model_reasoning_summary=\"none\" --sandbox workspace-write --skip-git-repo-check -' npx transitions-refine live",
+    "prebuild": "npm run check:build",
     "build": "next build",
+    "prestart": "npm run check:runtime",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"tests/**/*.test.mjs\" test-stream-parse.mjs test-act-envelope.mjs"
@@ -18,7 +29,8 @@
     "js-yaml": "^4.2.0",
     "lucide-react": "^1.8.0",
     "next": "16.3.0",
-    "playwright-core": "^1.61.0",
+    "pdfjs-dist": "5.4.624",
+    "playwright-core": "1.62.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-markdown": "^9.0.1",

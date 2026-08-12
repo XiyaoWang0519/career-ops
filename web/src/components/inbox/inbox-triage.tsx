@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Undo2 } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
 import type { InboxJob } from "@/lib/career-ops";
@@ -12,8 +13,8 @@ import { TriageRow, type RowScore } from "./triage-row";
 import { ShortlistTray, type ShortItem } from "./shortlist-tray";
 import { cn } from "@/lib/cn";
 
-const SHORTLIST_KEY = "career-ops:shortlist";
-const HIDDEN_KEY = "career-ops:hidden";
+const LEGACY_SHORTLIST_KEY = "career-ops:shortlist";
+const LEGACY_HIDDEN_KEY = "career-ops:hidden";
 const CONFIG_KEY = "career-ops:config";
 const BATCH = 20;
 
@@ -23,6 +24,7 @@ const BATCH = 20;
 // role relevant — order is freshness with a single documented plug point.
 export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const { jobs, startJob } = useJobs();
+  const router = useRouter();
 
   // facets
   const [within, setWithin] = useState<number | null>(null);
@@ -38,27 +40,58 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [undo, setUndo] = useState<{ label: string; fn: () => void } | null>(null);
   const [hasCli, setHasCli] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(SHORTLIST_KEY);
-      if (s) setShortlist(JSON.parse(s));
-      const h = localStorage.getItem(HIDDEN_KEY);
-      if (h) setHidden(JSON.parse(h));
-      const c = localStorage.getItem(CONFIG_KEY);
-      setHasCli(!!(c && JSON.parse(c).cliId));
-    } catch {
-      /* ignore */
-    }
-    setLoaded(true);
-  }, []);
+    let cancelled = false;
+    (async () => {
+      let legacyShortlist: ShortItem[] = [];
+      let legacyHidden: string[] = [];
+      try {
+        const saved = localStorage.getItem(LEGACY_SHORTLIST_KEY);
+        const skipped = localStorage.getItem(LEGACY_HIDDEN_KEY);
+        if (saved) legacyShortlist = JSON.parse(saved);
+        if (skipped) legacyHidden = JSON.parse(skipped);
+        const config = localStorage.getItem(CONFIG_KEY);
+        setHasCli(!!(config && JSON.parse(config).cliId));
+      } catch {
+        /* malformed legacy state or unavailable storage */
+      }
+      try {
+        const response = await fetch("/api/triage");
+        const data = response.ok ? await response.json() : { shortlist: [] };
+        let shared: ShortItem[] = Array.isArray(data.shortlist) ? data.shortlist : [];
+        // Move browser-only state into the user layer once, then retire it.
+        if (shared.length === 0 && legacyShortlist.length > 0) {
+          const migrated = await fetch("/api/triage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "save", items: legacyShortlist }),
+          }).then((res) => (res.ok ? res.json() : null));
+          if (migrated?.shortlist) shared = migrated.shortlist;
+        }
+        if (legacyHidden.length > 0) {
+          await Promise.all(legacyHidden.map((url) => fetch("/api/triage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "skip", url }),
+          })));
+          router.refresh();
+        }
+        localStorage.removeItem(LEGACY_SHORTLIST_KEY);
+        localStorage.removeItem(LEGACY_HIDDEN_KEY);
+        if (!cancelled) setShortlist(shared);
+      } catch {
+        if (!cancelled) setSyncError("Shared shortlist is temporarily unavailable.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [router]);
+
   useEffect(() => {
-    if (loaded) try { localStorage.setItem(SHORTLIST_KEY, JSON.stringify(shortlist)); } catch { /* quota */ }
-  }, [shortlist, loaded]);
-  useEffect(() => {
-    if (loaded) try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden)); } catch { /* quota */ }
-  }, [hidden, loaded]);
+    document.body.classList.toggle("co-shortlist-active", shortlist.length > 0);
+    return () => document.body.classList.remove("co-shortlist-active");
+  }, [shortlist.length]);
   // auto-dismiss the undo toast
   useEffect(() => {
     if (!undo) return;
@@ -135,13 +168,40 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
 
   const isShortlisted = (url: string) => shortlist.some((s) => s.url === url);
 
+  const sync = async (body: Record<string, unknown>) => {
+    const response = await fetch("/api/triage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error("sync failed");
+    return response.json();
+  };
+
   const save = (job: InboxJob) => {
     if (isShortlisted(job.url)) return;
-    setShortlist((s) => [...s, { url: job.url, company: job.company, role: job.role }]);
+    const item = { url: job.url, company: job.company, role: job.role };
+    setShortlist((s) => [...s, item]);
+    setSyncError("");
+    void sync({ action: "save", item }).catch(() => {
+      setShortlist((items) => items.filter((entry) => entry.url !== job.url));
+      setSyncError("Couldn’t save that role. Try again.");
+    });
   };
   const skip = (job: InboxJob) => {
     setHidden((h) => (h.includes(job.url) ? h : [...h, job.url]));
-    setUndo({ label: `Skipped ${job.company}`, fn: () => setHidden((h) => h.filter((u) => u !== job.url)) });
+    setShortlist((items) => items.filter((entry) => entry.url !== job.url));
+    void sync({ action: "skip", url: job.url }).then(() => router.refresh()).catch(() => {
+      setHidden((items) => items.filter((url) => url !== job.url));
+      setSyncError("Couldn’t skip that role. Try again.");
+    });
+    setUndo({
+      label: `Skipped ${job.company}`,
+      fn: () => {
+        setHidden((items) => items.filter((url) => url !== job.url));
+        void sync({ action: "restore", url: job.url }).then(() => router.refresh()).catch(() => setSyncError("Couldn’t restore that role."));
+      },
+    });
   };
   const toggleSelect = (url: string) =>
     setSelected((s) => {
@@ -154,7 +214,14 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
     const add = enriched
       .filter((e) => selected.has(e.job.url) && !isShortlisted(e.job.url))
       .map((e) => ({ url: e.job.url, company: e.job.company, role: e.job.role }));
-    if (add.length) setShortlist((s) => [...s, ...add]);
+    if (add.length) {
+      setShortlist((items) => [...items, ...add]);
+      void sync({ action: "save", items: add }).catch(() => {
+        const urls = new Set(add.map((item) => item.url));
+        setShortlist((items) => items.filter((item) => !urls.has(item.url)));
+        setSyncError("Couldn’t save the selected roles.");
+      });
+    }
     setSelected(new Set());
   };
 
@@ -173,6 +240,25 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
       startJob({ title: `Score · ${it.company}`, subtitle: it.role, kind: "evaluate", input: it.url, page: "/pipeline", batchId });
     }
     setShortlist([]); // sent — the rows flip to Scoring… → badge via scoreByUrl
+    void sync({ action: "clear" }).catch(() => setSyncError("Scoring started, but the shared shortlist could not be cleared."));
+  };
+
+  const removeFromShortlist = (url: string) => {
+    const previous = shortlist;
+    setShortlist((items) => items.filter((item) => item.url !== url));
+    void sync({ action: "remove", url }).catch(() => {
+      setShortlist(previous);
+      setSyncError("Couldn’t update the shared shortlist.");
+    });
+  };
+
+  const clearShortlist = () => {
+    const previous = shortlist;
+    setShortlist([]);
+    void sync({ action: "clear" }).catch(() => {
+      setShortlist(previous);
+      setSyncError("Couldn’t clear the shared shortlist.");
+    });
   };
 
   // The parent (PipelineView) renders the rich empty-inbox card; here we always
@@ -205,12 +291,14 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         <p className="text-sm font-medium text-foreground">
           {capped ? "Fresh — worth a look" : anyFacet ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}` : "All roles"}
         </p>
-        {hiddenCount > 0 && (
-          <button type="button" onClick={() => setHidden([])} className="text-xs text-faint transition-colors hover:text-foreground">
-            {hiddenCount} hidden · restore
-          </button>
-        )}
+        {hiddenCount > 0 && <span className="text-xs text-faint">{hiddenCount} skipped this session</span>}
       </div>
+
+      {syncError && (
+        <p role="status" className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+          {syncError}
+        </p>
+      )}
 
       {/* multi-select action bar */}
       {selected.size > 0 && (
@@ -281,8 +369,8 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         items={shortlist}
         estimate={estimate}
         hasCli={hasCli}
-        onRemove={(url) => setShortlist((s) => s.filter((x) => x.url !== url))}
-        onClear={() => setShortlist([])}
+        onRemove={removeFromShortlist}
+        onClear={clearShortlist}
         onScore={scoreShortlist}
       />
     </div>

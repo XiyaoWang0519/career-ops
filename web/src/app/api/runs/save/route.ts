@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { careerOpsRoot } from "@/lib/career-ops";
+import { formatRunCost } from "@/lib/run-cost.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,9 +11,11 @@ type Body = {
   id?: string;
   title?: string;
   subtitle?: string;
+  kind?: string;
   page?: string;
   input?: string;
   result?: { score: number | null; summary: string };
+  cost?: { tokens: number; usd?: number; billing?: "plan" | "metered" | "unknown" };
   steps?: { kind: string; label: string }[];
   output?: string;
 };
@@ -40,9 +43,12 @@ export async function POST(req: Request) {
   const md = `# Web run · ${b.title || b.id}
 
 - id: ${b.id}
+- kind: ${b.kind || "-"}
+- subtitle: ${b.subtitle || "-"}
 - page: ${b.page || "-"}
 - input: ${b.input || "-"}
 - verdict: ${verdict}
+${formatRunCost(b.cost)}
 
 ## Steps
 ${steps}

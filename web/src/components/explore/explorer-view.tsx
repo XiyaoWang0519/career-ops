@@ -127,7 +127,7 @@ export function ExplorerView({
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2.5">
             <Compass className="size-6 text-brand" />
-            <h1 className={`${instrumentSerif.className} text-3xl text-foreground`}>Explore</h1>
+            <h1 className={`${instrumentSerif.className} text-3xl text-foreground`}>Find roles</h1>
             <span className="rounded-full border border-brand/30 bg-brand-soft px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-text">New</span>
           </div>
           <div className="w-full sm:ml-auto sm:w-auto">
@@ -138,7 +138,7 @@ export function ExplorerView({
           <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-muted">
             {isAi
               ? "Describe the role in plain language — an AI hunts the open web for it, on your own AI. Candidates are unverified until you evaluate."
-              : "Scan the public ATS network — Greenhouse, Lever, Ashby, Workday. Fresh postings matched to you, zero tokens. You only spend when you choose to evaluate one."}
+              : "Scan the public ATS network — Greenhouse, Lever, Ashby, Workday. Save promising roles to your opportunity inbox; only evaluation spends tokens."}
           </p>
         )}
       </header>

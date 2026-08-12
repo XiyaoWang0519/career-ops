@@ -179,11 +179,12 @@ export function parseCodexLine(line) {
     }
     case "turn.completed": {
       const u = ev.usage || {};
-      const tokens =
-        (Number(u.input_tokens) || 0) +
-        (Number(u.output_tokens) || 0) +
-        (Number(u.cached_input_tokens) || 0) +
-        (Number(u.reasoning_output_tokens) || 0);
+      // Codex reports cached_input_tokens as a subset of input_tokens and
+      // reasoning_output_tokens as a subset of output_tokens. Adding either
+      // detail field again inflates the total. Prefer an explicit total when a
+      // newer CLI supplies it; otherwise input + output is authoritative.
+      const explicitTotal = Number(u.total_tokens) || 0;
+      const tokens = explicitTotal || (Number(u.input_tokens) || 0) + (Number(u.output_tokens) || 0);
       if (tokens > 0) out.push({ type: "tokens", tokens, costUsd: null });
       break;
     }

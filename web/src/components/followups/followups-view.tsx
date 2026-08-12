@@ -105,6 +105,8 @@ export function FollowupsView() {
   const pSort = params.get("sort") ?? "";
   const sortKey: SortKey | null = (SORT_KEYS as readonly string[]).includes(pSort) ? (pSort as SortKey) : null;
   const dir = (params.get("dir") === "-1" ? -1 : 1) as 1 | -1;
+  const appFilter = Number(params.get("app"));
+  const hasAppFilter = Number.isInteger(appFilter) && appFilter > 0;
 
   const [q, setQ] = useState(params.get("q") ?? "");
   const lastUrlQ = useRef(params.get("q") ?? "");
@@ -132,9 +134,10 @@ export function FollowupsView() {
   const entries = useMemo(() => (data?.available ? data.entries : []), [data]);
   const meta = data?.available ? data.metadata : null;
 
-  const filtering = tab !== "ALL" || q.trim().length > 0;
+  const filtering = tab !== "ALL" || q.trim().length > 0 || hasAppFilter;
   const filtered = useMemo(() => {
     let rows = entries;
+    if (hasAppFilter) rows = rows.filter((entry) => entry.num === appFilter);
     if (tab !== "ALL") rows = rows.filter((e) => e.urgency.toUpperCase() === tab);
     if (q.trim()) {
       const needle = q.toLowerCase();
@@ -150,7 +153,7 @@ export function FollowupsView() {
       if (typeof av === "string" && typeof bv === "string") return av.localeCompare(bv) * dir;
       return ((av as number) - (bv as number)) * dir;
     });
-  }, [entries, tab, q, sortKey, dir]);
+  }, [entries, tab, q, sortKey, dir, appFilter, hasAppFilter]);
 
   const removeLogged = async (num: number) => {
     setActionError(null);
@@ -196,7 +199,7 @@ export function FollowupsView() {
     <div className="mx-auto max-w-none px-6 py-8">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl tracking-tight text-landing">Follow-up Tracker</h1>
+          <h1 className="font-display text-2xl tracking-tight text-landing">Conversations</h1>
           <p className="mt-1 text-sm text-muted">{subtitle}</p>
         </div>
         <div className="relative w-56 max-w-[35vw]">
@@ -232,6 +235,13 @@ export function FollowupsView() {
       </div>
 
       {actionError && <p className="mt-3 text-xs text-red-500">{actionError}</p>}
+
+      {hasAppFilter && (
+        <div className="mt-3 flex items-center gap-2 text-xs">
+          <span className="text-faint">Showing opportunity #{appFilter}</span>
+          <button type="button" onClick={() => setParams({ app: null })} className="font-medium text-brand hover:underline">Show all conversations</button>
+        </div>
+      )}
 
       {!data ? null : !data.available ? (
         <EmptyPanel title="Cadence unavailable" body="The cadence engine (followup-cadence.mjs) returned nothing — check that the core scripts are present." />

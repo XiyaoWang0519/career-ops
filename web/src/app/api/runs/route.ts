@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { careerOpsRoot } from "@/lib/career-ops";
+import { parseRunCost } from "@/lib/run-cost.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,12 +11,14 @@ type PersistedJob = {
   id: string;
   title: string;
   subtitle?: string;
+  kind?: string;
   page?: string;
   input?: string;
   status: "done";
   steps: { kind: "tool" | "status"; label: string; ts: number }[];
   text: string;
   result?: { score: number | null; summary: string; tone: "good" | "warn" | "bad" | "muted" };
+  cost?: { tokens: number; usd?: number; billing?: "plan" | "metered" | "unknown" };
   startedAt: number;
   endedAt?: number;
 };
@@ -30,6 +33,8 @@ function toneFor(score: number | null): "good" | "warn" | "bad" | "muted" {
 /** Parse a markdown log written by /api/runs/save back into a Job-shaped object. */
 function parseRunMd(id: string, md: string, mtimeMs: number): PersistedJob {
   const title = (md.match(/^# Web run · (.+)$/m) || [])[1]?.trim() || id;
+  const kind = (md.match(/^- kind:\s*(.+)$/m) || [])[1]?.trim();
+  const subtitle = (md.match(/^- subtitle:\s*(.+)$/m) || [])[1]?.trim();
   const page = (md.match(/^- page:\s*(.+)$/m) || [])[1]?.trim();
   const input = (md.match(/^- input:\s*(.+)$/m) || [])[1]?.trim();
   const verdictRaw = (md.match(/^- verdict:\s*(.+)$/m) || [])[1]?.trim() || "";
@@ -52,12 +57,15 @@ function parseRunMd(id: string, md: string, mtimeMs: number): PersistedJob {
   return {
     id,
     title,
+    kind: kind && kind !== "-" ? kind : undefined,
+    subtitle: subtitle && subtitle !== "-" ? subtitle : undefined,
     page: page && page !== "-" ? page : undefined,
     input: input && input !== "-" ? input : undefined,
     status: "done",
     steps,
     text: output.slice(-8000),
     result: score != null || summary ? { score, summary, tone: toneFor(score) } : undefined,
+    cost: parseRunCost(md),
     startedAt: mtimeMs,
     endedAt: mtimeMs,
   };

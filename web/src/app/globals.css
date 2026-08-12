@@ -540,6 +540,12 @@ html {
   border-radius: 999px;
 }
 
+/* The inbox shortlist is a real bottom action surface. Lift other fixed affordances
+   above it while it is present so mobile never becomes a stack of overlapping UI. */
+.co-shortlist-active .co-assistant-morph {
+  bottom: calc(7.5rem + env(safe-area-inset-bottom));
+}
+
 @media (max-width: 639px) {
   .co-explore-tabs .t-tab,
   .co-explore-tabs .t-tabs-pill {

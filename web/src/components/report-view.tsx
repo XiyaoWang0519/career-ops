@@ -8,9 +8,9 @@ import { scoreTone, scoreNum, legitimacyTone, parseReport } from "@/lib/format";
 import { StatusSelect } from "@/components/status-select";
 import { CompanyLogo } from "@/components/company-logo";
 import { ScoreMethodology } from "@/components/score-methodology";
-import { GeneratePdfButton } from "@/components/generate-pdf-button";
-import { ApplyButton } from "@/components/apply-button";
 import { DeleteFromTracker } from "@/components/delete-from-tracker";
+import { OpportunityWorkspace } from "@/components/opportunity-workspace";
+import { buildOpportunity } from "@/lib/opportunity";
 
 // Progressive disclosure of the report. The core writes prose blocks
 // "## F) Verdict (lead)", "## A) Role Summary", "## B) Match with CV", then
@@ -91,6 +91,7 @@ export function ReportView({
   const date = app?.date || field("Date");
   const archetype = field("Archetype");
   const url = field("URL");
+  const opportunity = app ? buildOpportunity(app, report) : null;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -98,7 +99,7 @@ export function ReportView({
         href="/pipeline"
         className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-brand"
       >
-        <ArrowLeft className="size-4" /> Pipeline
+        <ArrowLeft className="size-4" /> Opportunities
       </Link>
 
       <header className="mt-5">
@@ -122,8 +123,6 @@ export function ReportView({
           })()}
           {meta?.legitimacy && <Badge tone={legitimacyTone(meta.legitimacy)}>{meta.legitimacy}</Badge>}
           {app && <StatusSelect n={id} current={app.status} />}
-          <GeneratePdfButton n={id} company={app?.company ?? meta?.title ?? id} pdfReady={(app?.pdf ?? "").includes("✅")} />
-          <ApplyButton n={id} url={url && url.startsWith("http") ? url : undefined} company={app?.company ?? meta?.title ?? id} pdfReady={(app?.pdf ?? "").includes("✅")} />
         </div>
 
         {app && canDelete && (
@@ -150,8 +149,10 @@ export function ReportView({
         )}
       </header>
 
+      {opportunity && <OpportunityWorkspace opportunity={opportunity} />}
+
       {report ? (
-        <>
+        <div id="evaluation" className="scroll-mt-6">
           {(() => {
             const { intro, sections } = splitSections(meta?.body ?? report);
             // Tolerant fallback: unrecognized layout → render the whole body as
@@ -236,7 +237,7 @@ export function ReportView({
             );
           })()}
           <ScoreMethodology />
-        </>
+        </div>
       ) : (
         <div className="mt-8 flex items-center gap-3 rounded-2xl border border-dashed border-border bg-surface/30 p-5 text-sm text-muted">
           <FileText className="size-5 shrink-0 text-faint" />

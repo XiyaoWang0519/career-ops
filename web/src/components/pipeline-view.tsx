@@ -11,10 +11,11 @@ import { canonStatus, scoreNum, scoreTone, statusDot } from "@/lib/format";
 import { InboxTriage } from "@/components/inbox/inbox-triage";
 import { cn } from "@/lib/cn";
 
-// INBOX (the triage queue) is the default tab; the rest filter the tracker.
-const TABS = [
-  "INBOX",
-  "ALL",
+// One opportunity lifecycle, expressed as a small set of meaningful groups.
+// Canonical status values remain accepted in the URL for analytics/assistant links.
+const PRIMARY_TABS = ["INBOX", "REVIEW", "ACTIVE", "CLOSED", "ALL"] as const;
+const PRIMARY_LABEL: Record<(typeof PRIMARY_TABS)[number], string> = { INBOX: "Inbox", REVIEW: "Review", ACTIVE: "Active", CLOSED: "Closed", ALL: "All" };
+const STATUS_TABS = [
   "EVALUATED",
   "APPLIED",
   "RESPONDED",
@@ -25,7 +26,17 @@ const TABS = [
   "DISCARDED",
   "SKIP",
 ] as const;
-type Tab = (typeof TABS)[number];
+type Tab = (typeof PRIMARY_TABS)[number] | (typeof STATUS_TABS)[number];
+
+const ACTIVE_STATUSES: Tab[] = ["APPLIED", "RESPONDED", "INTERVIEW", "OFFER"];
+const CLOSED_STATUSES: Tab[] = ["HIRED", "REJECTED", "DISCARDED", "SKIP"];
+
+function groupFor(tab: Tab): (typeof PRIMARY_TABS)[number] {
+  if (tab === "EVALUATED") return "REVIEW";
+  if (ACTIVE_STATUSES.includes(tab)) return "ACTIVE";
+  if (CLOSED_STATUSES.includes(tab)) return "CLOSED";
+  return tab as (typeof PRIMARY_TABS)[number];
+}
 
 const SORT_KEYS = ["company", "role", "score", "status", "date"] as const;
 type SortKey = (typeof SORT_KEYS)[number];
@@ -45,9 +56,13 @@ export function PipelineView({
   // tiles' deep links AND the assistant's filterPipeline/navigate actions drive
   // the table identically (no useState mirror → no desync).
   const pTab = (params.get("tab") ?? "").toUpperCase();
-  const tab: Tab = (TABS as readonly string[]).includes(pTab) ? (pTab as Tab) : "INBOX";
+  const validTabs = [...PRIMARY_TABS, ...STATUS_TABS] as readonly string[];
+  const tab: Tab = validTabs.includes(pTab) ? (pTab as Tab) : "INBOX";
+  const group = groupFor(tab);
   const pMin = parseFloat(params.get("min") ?? "");
   const minFilter: number | null = Number.isFinite(pMin) ? pMin : null;
+  const pMax = parseFloat(params.get("max") ?? "");
+  const maxFilter: number | null = Number.isFinite(pMax) ? pMax : null;
   const pSort = params.get("sort") ?? "";
   const sortKey: SortKey = (SORT_KEYS as readonly string[]).includes(pSort) ? (pSort as SortKey) : "score";
   const sort = { key: sortKey, dir: (params.get("dir") === "1" ? 1 : -1) as 1 | -1 };
@@ -91,13 +106,22 @@ export function PipelineView({
   }, [inbox]);
 
   const filtered = useMemo(() => {
-    if (tab === "INBOX") return [];
+    if (group === "INBOX") return [];
     let rows = applications;
-    if (tab !== "ALL") rows = rows.filter((r) => canonStatus(r.status).includes(tab));
+    if (tab === "REVIEW") rows = rows.filter((r) => canonStatus(r.status).includes("EVALUATED"));
+    else if (tab === "ACTIVE") rows = rows.filter((r) => ACTIVE_STATUSES.some((status) => canonStatus(r.status).includes(status)));
+    else if (tab === "CLOSED") rows = rows.filter((r) => CLOSED_STATUSES.some((status) => canonStatus(r.status).includes(status)));
+    else if (tab !== "ALL" && tab !== "INBOX") rows = rows.filter((r) => canonStatus(r.status).includes(tab));
     if (minFilter != null) {
       rows = rows.filter((r) => {
         const n = scoreNum(r.score);
         return !Number.isNaN(n) && n >= minFilter;
+      });
+    }
+    if (maxFilter != null) {
+      rows = rows.filter((r) => {
+        const n = scoreNum(r.score);
+        return !Number.isNaN(n) && n <= maxFilter;
       });
     }
     if (q.trim()) {
@@ -114,21 +138,21 @@ export function PipelineView({
       }
       return (a[sort.key] || "").localeCompare(b[sort.key] || "") * sort.dir;
     });
-  }, [applications, tab, q, sort, minFilter]);
+  }, [applications, tab, group, q, sort, minFilter, maxFilter]);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8 max-sm:pb-24">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex items-end justify-between gap-4 max-sm:flex-col max-sm:items-stretch">
         <div>
-          <h1 className="font-display text-2xl tracking-tight text-landing">Pipeline</h1>
+          <h1 className="font-display text-2xl tracking-tight text-landing">Opportunities</h1>
           <p className="mt-1 text-sm text-muted">
-            <span className="tabular-nums">{pendingInbox.length}</span> in inbox ·{" "}
+            Discover, decide, apply, and follow through — every role stays connected. <span className="tabular-nums">{pendingInbox.length}</span> to review ·{" "}
             <span className="tabular-nums">{applications.length}</span> tracked
           </p>
         </div>
         {/* the tracker has its own search; the inbox brings its own facet filters */}
-        {tab !== "INBOX" && (
-          <div className="relative w-64 max-w-[40vw]">
+        {group !== "INBOX" && (
+          <div className="relative w-64 max-w-[46vw] max-sm:w-full max-sm:max-w-none">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-faint" />
             <input
               value={q}
@@ -141,47 +165,60 @@ export function PipelineView({
       </div>
 
       {/* tabs */}
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-border">
-        {TABS.map((t) => {
+      <div className="mt-6 grid grid-cols-5 border-b border-border sm:flex sm:gap-1">
+        {PRIMARY_TABS.map((t) => {
           const count =
             t === "INBOX"
               ? pendingInbox.length
               : t === "ALL"
                 ? applications.length
-                : applications.filter((r) => canonStatus(r.status).includes(t)).length;
+                : t === "REVIEW"
+                  ? applications.filter((r) => canonStatus(r.status).includes("EVALUATED")).length
+                  : t === "ACTIVE"
+                    ? applications.filter((r) => ACTIVE_STATUSES.some((status) => canonStatus(r.status).includes(status))).length
+                    : applications.filter((r) => CLOSED_STATUSES.some((status) => canonStatus(r.status).includes(status))).length;
           return (
             <button
               key={t}
               onClick={() => setParams({ tab: t === "INBOX" ? null : t })}
               className={cn(
-                "-mb-px inline-flex items-center justify-center border-b-2 px-3 py-2 text-xs font-medium transition-colors max-sm:min-h-[44px]",
-                tab === t
+                "-mb-px inline-flex items-center justify-center gap-1.5 border-b-2 px-3 py-2 text-xs font-medium transition-colors max-sm:min-h-[44px]",
+                group === t
                   ? "border-brand text-foreground"
                   : "border-transparent text-muted hover:text-foreground",
               )}
             >
-              {t} <span className="text-faint tabular-nums">{count}</span>
+              <span>{PRIMARY_LABEL[t]}</span> <span className="text-faint tabular-nums max-sm:hidden">{count}</span>
             </button>
           );
         })}
       </div>
 
-      {tab !== "INBOX" && minFilter != null && (
+      {(group === "ACTIVE" || group === "CLOSED") && (
+        <div className="mt-3 flex gap-1 overflow-x-auto pb-1" aria-label={`${group.toLowerCase()} status filters`}>
+          <button type="button" onClick={() => setParams({ tab: group })} className={cn("shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium", tab === group ? "border-brand/40 bg-brand-soft text-brand" : "border-border text-muted hover:text-foreground")}>All {group.toLowerCase()}</button>
+          {(group === "ACTIVE" ? ACTIVE_STATUSES : CLOSED_STATUSES).map((status) => (
+            <button key={status} type="button" onClick={() => setParams({ tab: status })} className={cn("shrink-0 rounded-full border px-3 py-1.5 text-xs font-medium", tab === status ? "border-brand/40 bg-brand-soft text-brand" : "border-border text-muted hover:text-foreground")}>{status.toLowerCase()}</button>
+          ))}
+        </div>
+      )}
+
+      {group !== "INBOX" && (minFilter != null || maxFilter != null) && (
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs text-faint">Filtered:</span>
           <button
             type="button"
-            onClick={() => setParams({ min: null })}
+            onClick={() => setParams({ min: null, max: null })}
             className="inline-flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand-soft px-2.5 py-1 text-xs font-medium text-brand transition-colors hover:bg-brand/15"
             title="Clear score filter"
           >
-            score ≥ {minFilter.toFixed(1)}
+            {minFilter != null && maxFilter != null ? `score ${minFilter.toFixed(1)}–${maxFilter.toFixed(1)}` : minFilter != null ? `score ≥ ${minFilter.toFixed(1)}` : `score ≤ ${maxFilter!.toFixed(1)}`}
             <X className="size-3" />
           </button>
         </div>
       )}
 
-      {tab === "INBOX" ? (
+      {group === "INBOX" ? (
         /* ── Inbox: the triage surface (Abundance → Triage → Shortlist → Score) ── */
         pendingInbox.length > 0 ? (
           <InboxTriage inbox={pendingInbox} />
@@ -190,7 +227,23 @@ export function PipelineView({
         )
       ) : filtered.length > 0 ? (
         /* ── Tracker table ── */
-        <div className="mt-4 overflow-hidden rounded-2xl border border-border">
+        <>
+        <ul className="mt-4 space-y-2 sm:hidden">
+          {filtered.map((row, index) => (
+            <li key={`${row.n}-${index}`}>
+              <Link href={`/pipeline/${row.n}`} className="flex min-h-[76px] items-center gap-3 rounded-xl border border-border bg-surface/40 px-3.5 py-3 transition-colors hover:border-brand/35">
+                <CompanyLogo name={row.company} size={28} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-foreground">{row.company}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted">{row.role}</span>
+                  <span className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-faint"><span className={cn("size-1.5 rounded-full", statusDot(row.status))} />{row.status}</span>
+                </span>
+                <Badge tone={scoreTone(row.score)}>{row.score || "—"}</Badge>
+              </Link>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 hidden overflow-hidden rounded-2xl border border-border sm:block">
           <table className="w-full text-sm">
             <thead className="bg-surface/60 text-left text-xs uppercase tracking-wide text-faint">
               <tr>
@@ -235,6 +288,7 @@ export function PipelineView({
             </tbody>
           </table>
         </div>
+        </>
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-border bg-surface/30 px-6 py-12 text-center">
           <p className="font-display text-lg">No matches</p>

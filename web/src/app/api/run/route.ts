@@ -7,6 +7,7 @@ import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf } from "@/lib/pdf-render.mjs";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
 import { parseCodexLine } from "@/lib/codex-stream.mjs";
+import { codexBillingMode } from "@/lib/codex-billing.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -153,6 +154,7 @@ export async function POST(req: Request) {
 
   const isClaude = resolvedCliId === "claude";
   const isCodex = resolvedCliId === "codex";
+  const billing = isCodex ? codexBillingMode() : undefined;
   // Tool scope by kind (comma-separated lists; disallowedTools is the hard
   // guardrail). 'evaluate'/'fix-portal' run the REAL mode + persist canonical
   // artifacts → they need Write + Bash (reserve-report-num / merge-tracker /
@@ -340,7 +342,7 @@ export async function POST(req: Request) {
           // Non-fatal issues (missing format sidecar, tracker not marked) still
           // surface here rather than only in a server log nobody sees.
           for (const w of result.warnings) send({ type: "text", text: `⚠️ ${w}\n` });
-          send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd });
+          send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd, billing });
         } catch (e) {
           send({ type: "error", msg: `PDF rendering crashed unexpectedly: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200) });
         } finally {
@@ -406,7 +408,7 @@ export async function POST(req: Request) {
           // instead of recording a confident score off a half-finished run.
           send({ type: "error", msg: "This run hit an error before finishing, so it isn't recorded as a confident result — re-run it to verify." });
         } else {
-          send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd });
+          send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd, billing });
         }
         close();
       });

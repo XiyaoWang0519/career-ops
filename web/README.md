@@ -11,16 +11,23 @@ database. If you never run it, nothing about your CLI workflow changes.
 
 ## Quick start
 
-Requires Node 20+.
+Requires Node 20.16+ (Node 22 LTS or newer is recommended). A CV and profile are
+**not** prerequisites: a new user can create both from the onboarding screen.
+The core runtime dependencies are still required because the web app launches
+the same local career-ops workers as the CLI.
 
 ```bash
-cd web
-npm ci
-npm run dev
+cd career-ops
+npm run setup:web
+npm --prefix web run dev
 ```
 
 Open http://localhost:3000. The app reads the career-ops checkout it lives in
 (the parent directory) — your existing CV, pipeline and reports appear as-is.
+On a fresh laptop, do not copy `node_modules`; run `npm run setup:web`. It
+installs the core and web packages, installs managed Chromium, and launch-checks
+the PDF parser, browser, career-ops root, and configured AI CLI before reporting
+success. The same checks run automatically before `dev`, `build`, and `start`.
 
 ## What works today
 
@@ -90,8 +97,10 @@ PORT=3001
 ```
 
 ```bash
-# 3. Start (production-ish)
-npm ci
+# 3. Install and verify every managed dependency, then start
+cd ..
+npm run setup:web
+cd web
 npm run build
 npm run start -- -p 3001
 # or: npm run dev -- -p 3001
@@ -111,6 +120,11 @@ Only the human presses the final Submit/Send/Apply control.
 This requires a long-running Node process, an in-memory browser session, and a
 Chrome/Chromium process. Deploy it to a VM or persistent container, not a
 serverless Vercel Function.
+
+`npm run setup:web` owns the portable runtime dependencies, including PDF.js
+and Chromium. The selected AI CLI and its login/API credentials remain host
+configuration; the startup preflight verifies the executable is present and
+refuses to start with a partial installation.
 
 ## Environment variables
 

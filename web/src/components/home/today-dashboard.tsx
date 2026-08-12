@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { Bell, CircleHelp, Sparkles, ArrowRight } from "lucide-react";
 import { instrumentSerif } from "@/lib/fonts";
 import { HeroGlow } from "@/components/hero-glow";
-import type { Application, InboxJob } from "@/lib/career-ops";
+import type { InboxJob } from "@/lib/career-ops";
+import type { OpportunityView } from "@/lib/opportunity";
 import type { DiscoveredOffer } from "@/lib/explore";
 import { DiscoveryCard } from "@/components/explore/discovery-card";
 import { FollowUpCard, type FollowUp } from "@/components/home/follow-up-card";
@@ -19,11 +20,11 @@ import { QuickEvaluate } from "@/components/quick-evaluate";
 // (/api/followups). Each item one-tap actionable. Home stays a VIEW over the
 // canonical files — every action dispatches a real registry action / route.
 export function TodayDashboard({
-  applications,
+  opportunities,
   inbox,
   inBetween,
 }: {
-  applications: Application[];
+  opportunities: OpportunityView[];
   inbox: InboxJob[];
   inBetween: boolean;
 }) {
@@ -62,13 +63,22 @@ export function TodayDashboard({
 
   // Awaiting decision: scored (Evaluated) but no terminal status yet.
   const awaiting = useMemo(
-    () => applications.filter((a) => /^evaluat/i.test(a.status)).slice(0, 6),
-    [applications],
+    () => opportunities.filter((opportunity) => /^evaluat/i.test(opportunity.status)).slice(0, 6),
+    [opportunities],
   );
 
-  const newThisWeek = fresh.length;
-  const allClear = newThisWeek === 0 && overdue === 0 && awaiting.length === 0;
   const inboxUrls = useMemo(() => new Set(inbox.map((j) => j.url)), [inbox]);
+  const pendingInbox = useMemo(() => {
+    const seen = new Set<string>();
+    return inbox.filter((job) => {
+      if (job.done || seen.has(job.url)) return false;
+      seen.add(job.url);
+      return true;
+    });
+  }, [inbox]);
+  const freshOutsideInbox = useMemo(() => fresh.filter((offer) => !inboxUrls.has(offer.url)), [fresh, inboxUrls]);
+  const rolesToReview = pendingInbox.length + freshOutsideInbox.length;
+  const allClear = rolesToReview === 0 && overdue === 0 && awaiting.length === 0;
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10 max-sm:pb-24">
@@ -85,29 +95,32 @@ export function TodayDashboard({
               <>You&apos;re all caught up.</>
             ) : (
               <>
-                {newThisWeek > 0 && (
+                {rolesToReview > 0 && (
                   <>
-                    <span className="text-brand tabular-nums">{newThisWeek}</span> new match{newThisWeek === 1 ? "" : "es"} this week
+                    <span className="text-brand tabular-nums">{rolesToReview}</span> role{rolesToReview === 1 ? "" : "s"} to review
                   </>
                 )}
-                {newThisWeek > 0 && overdue > 0 && <span className="text-faint"> · </span>}
+                {rolesToReview > 0 && overdue > 0 && <span className="text-faint"> · </span>}
                 {overdue > 0 && (
                   <>
                     <span className="text-brand tabular-nums">{overdue}</span> follow-up{overdue === 1 ? "" : "s"} due
                   </>
                 )}
+                {rolesToReview === 0 && overdue === 0 && awaiting.length > 0 && (
+                  <><span className="text-brand tabular-nums">{awaiting.length}</span> decision{awaiting.length === 1 ? "" : "s"} waiting</>
+                )}
               </>
             )}
           </h1>
           <p className="mt-4 max-w-xl text-sm text-muted">
-            {allClear ? "I'll keep scanning the market in the background and surface anything that fits." : "Your action queue for today — discovery and follow-ups, in one place."}
+            {allClear ? "I'll keep scanning the market in the background and surface anything that fits." : "One queue, ordered by the next action that moves each opportunity forward."}
           </p>
           <div className="mt-6 flex flex-wrap gap-2.5">
             <Link href="/explore" className="inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground transition hover:bg-brand-200 max-sm:min-h-[44px]">
               Find new roles <ArrowRight className="size-4" />
             </Link>
             <Link href="/pipeline" className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2.5 text-sm font-medium text-foreground transition hover:border-brand/40 hover:text-brand max-sm:min-h-[44px]">
-              Open pipeline
+              Review opportunities
             </Link>
           </div>
           {inBetween && <QuickEvaluate />}
@@ -127,26 +140,34 @@ export function TodayDashboard({
 
       {/* B. Awaiting your decision */}
       {awaiting.length > 0 && (
-        <Section icon={CircleHelp} title="Awaiting your decision" hint="Scored — apply or skip">
+        <Section icon={CircleHelp} title="Awaiting your decision" hint="Evaluated — prepare, apply, or close">
           <div className="grid gap-2.5 sm:grid-cols-2">
             {awaiting.map((a) => (
-              <DecisionCard key={a.n} app={a} />
+              <DecisionCard key={a.id} opportunity={a} />
             ))}
           </div>
         </Section>
       )}
 
-      {/* C. Fresh matches this week (supply loop) */}
-      {fresh.length > 0 && (
-        <Section icon={Sparkles} title="Fresh matches this week" hint="Found by your free scans · 0 tokens">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {fresh.slice(0, 6).map((o) => (
-              <DiscoveryCard key={o.url} offer={o} inPipeline={inboxUrls.has(o.url)} />
-            ))}
-          </div>
-          {fresh.length > 6 && (
+      {/* C. Roles to review — never duplicate roles already represented by Inbox. */}
+      {rolesToReview > 0 && (
+        <Section icon={Sparkles} title="Roles to review" hint="Free discovery → inbox triage → evaluation">
+          {pendingInbox.length > 0 && (
+            <Link href="/pipeline" className="mb-3 flex items-center gap-4 rounded-2xl border border-brand/25 bg-brand-soft/35 px-5 py-4 transition-colors hover:border-brand/45 hover:bg-brand-soft/55">
+              <span className="grid size-10 shrink-0 place-items-center rounded-full bg-brand text-sm font-semibold text-brand-foreground tabular-nums">{pendingInbox.length}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-foreground">Waiting in your opportunity inbox</span>
+                <span className="mt-0.5 block text-xs text-muted">Shortlist the promising roles, skip the rest, then evaluate only what is worth the spend.</span>
+              </span>
+              <ArrowRight className="size-4 shrink-0 text-brand" />
+            </Link>
+          )}
+          {freshOutsideInbox.length > 0 && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {freshOutsideInbox.slice(0, 6).map((o) => <DiscoveryCard key={o.url} offer={o} inPipeline={false} />)}
+          </div>}
+          {freshOutsideInbox.length > 6 && (
             <Link href="/explore?view=fresh" className="mt-3 inline-flex items-center text-sm text-muted transition hover:text-brand max-sm:min-h-[44px]">
-              See all {fresh.length} →
+              See all {freshOutsideInbox.length} new roles →
             </Link>
           )}
         </Section>

@@ -8,8 +8,9 @@ import { codexTextDelta } from "@/lib/codex-stream.mjs";
 import { extractPdfText } from "@/lib/cv/pdf-text.mjs";
 
 // Parse a CV (pasted text or an uploaded PDF) into clean cv.md markdown by running
-// the USER'S OWN CLI headless — the web never ships a heavyweight parser, and the
-// real CV NEVER leaves the machine (local-first, PII-safe). This route is a
+// the USER'S OWN CLI headless. PDF.js extracts selectable text in-process, so
+// there is no host-level Poppler dependency and the real CV never leaves the
+// machine (local-first, PII-safe). This route is a
 // PROPOSER: it produces candidate markdown only; the actual write to cv.md happens
 // via the existing POST /api/cv after the user confirms (propose-then-confirm).
 export const runtime = "nodejs";
@@ -91,13 +92,16 @@ export async function POST(req: Request) {
           // tool when deterministic text extraction has nothing to work with.
           promptSource = FILE_SRC(tempFile);
         } else {
+          if (extracted.detail) console.error(`[cv/ingest] PDF extraction failed (${extracted.reason}): ${extracted.detail}`);
           cleanupTemp(tempFile);
           tempFile = null;
           const error =
             extracted.reason === "no-text"
               ? "This PDF has no selectable text (it may be a scan). Paste the text instead."
+              : extracted.reason === "too-large"
+                ? "This PDF contains too much text to process safely. Upload a shorter CV or paste the relevant text."
               : extracted.reason === "unavailable"
-                ? "PDF text extraction is unavailable. Install Poppler (pdftotext), or paste the text instead."
+                ? "The bundled PDF parser is missing. Reinstall the web app dependencies and restart it."
                 : "Couldn't extract text from that PDF. Paste the text instead.";
           return Response.json({ error }, { status: 422 });
         }
