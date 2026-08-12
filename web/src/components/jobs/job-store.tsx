@@ -297,8 +297,13 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
     [listenToStream, patch],
   );
 
+  const attachJobRef = useRef(attachJob);
+  attachJobRef.current = attachJob;
+
   // restore history: merge localStorage + server-owned in-flight runs + disk logs
   // so Activity survives reloads. Running jobs reattach instead of interrupting.
+  // Mount-once (ref for attach) — re-running on attachJob identity churn would
+  // re-read localStorage and falsely interrupt jobs mid-reconnect.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -354,6 +359,10 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
             startedAt: j.startedAt || server.startedAt,
           };
         }
+        // Already recorded as interrupted in a prior session — don't stack labels.
+        if (j.steps?.some((s) => s.label === "Interrupted (page reloaded)")) {
+          return { ...j, status: "error" as const, endedAt: j.endedAt || Date.now() };
+        }
         return {
           ...j,
           status: "error" as const,
@@ -384,13 +393,13 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       const uniqueAttach = [...new Set(reattachIds)];
       for (const id of uniqueAttach) {
         const job = merged.find((j) => j.id === id);
-        if (job) void attachJob(job, "reattach");
+        if (job) void attachJobRef.current(job, "reattach");
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [attachJob]);
+  }, []);
 
   // persist
   useEffect(() => {

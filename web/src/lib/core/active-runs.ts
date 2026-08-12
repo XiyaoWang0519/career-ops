@@ -1,12 +1,13 @@
-// In-memory registry of web workers (evaluate / pdf / research / fix-portal).
-// The Next.js web app is a single long-lived Node process, so a module-level
-// Map is enough — same assumption as run-registry.ts (tracker write locks).
+// In-memory registry of web workers (evaluate / pdf / research / fix-portal)
+// and assistant chat turns. Stored on globalThis so Next.js / Turbopack HMR
+// recompiles do not wipe in-flight runs (a plain module Map would be replaced
+// and remounts would falsely show "Interrupted (page reloaded)").
 //
 // Why this exists: POST /api/run used to bind the CLI child to one HTTP
 // response. A page refresh aborted the fetch, stream.cancel() SIGTERM'd the
-// child, and the client marked the job "Interrupted (page reloaded)". Workers
-// are now server-owned: disconnect only drops a subscriber; the child keeps
-// running and a remount can reattach by id.
+// child, and the client marked the job interrupted. Workers are now
+// server-owned: disconnect only drops a subscriber; the child keeps running
+// and a remount can reattach by id.
 
 export type ActiveRunMeta = {
   id: string;
@@ -49,7 +50,14 @@ const RETAIN_MS = 10 * 60 * 1000;
 /** Soft cap so a chatty CLI can't unbounded-grow the ring buffer. */
 const MAX_BUFFER_BYTES = 2_000_000;
 
-const runs = new Map<string, ActiveRun>();
+// Survive Next.js / Turbopack HMR: a plain module-level Map is replaced on
+// recompile, which made remounts think in-flight workers were gone and mark
+// them "Interrupted (page reloaded)" even though the CLI child was still alive.
+type ActiveRunsGlobal = typeof globalThis & {
+  __careerOpsActiveRuns?: Map<string, ActiveRun>;
+};
+const g = globalThis as ActiveRunsGlobal;
+const runs: Map<string, ActiveRun> = g.__careerOpsActiveRuns ?? (g.__careerOpsActiveRuns = new Map());
 const enc = new TextEncoder();
 
 function snapshot(run: ActiveRun): ActiveRunSnapshot {
