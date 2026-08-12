@@ -1,7 +1,5 @@
 import Link from "next/link";
 import { ArrowLeft, FileText, ExternalLink, ChevronDown } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Application } from "@/lib/career-ops";
 import { Badge } from "@/components/ui/badge";
 import { scoreTone, scoreNum, legitimacyTone, parseReport } from "@/lib/format";
@@ -10,15 +8,16 @@ import { CompanyLogo } from "@/components/company-logo";
 import { ScoreMethodology } from "@/components/score-methodology";
 import { DeleteFromTracker } from "@/components/delete-from-tracker";
 import { OpportunityWorkspace } from "@/components/opportunity-workspace";
+import { ReportMarkdown } from "@/components/report-markdown";
 import { buildOpportunity } from "@/lib/opportunity";
 
-// Progressive disclosure of the report. The core writes prose blocks
-// "## F) Verdict (lead)", "## A) Role Summary", "## B) Match with CV", then
-// C–G + machine artifacts (Machine Summary YAML, Application Answers, submit
-// log). A mainstream user deciding "should I apply?" needs the verdict + fit;
-// the rest is depth-on-demand. We lead with the verdict as a callout, keep A/B
-// expanded, collapse C–G as content, and drop machine artifacts to a dimmer
-// "Technical" tier — and strip the bare "F)" author-letters from headings
+// Progressive disclosure of the report. The core writes "## A) Role Summary",
+// "## B) Match with CV", … "## F) Interview Plan", plus an optional Verdict
+// section and machine artifacts. A mainstream user deciding "should I apply?"
+// needs the verdict + fit; the rest is depth-on-demand. We lead with a real
+// Verdict heading as a callout (never Block F — that's interview STAR+R), keep
+// A/B/F expanded, collapse other content, and drop machine artifacts to a
+// dimmer "Technical" tier — strip bare "F)" author-letters from headings
 // (native <details>, no client JS — this stays a server component).
 
 type Section = { heading: string; letter: string | null; content: string };
@@ -35,6 +34,14 @@ function cleanHeading(h: string): string {
 // human content C–G (collapsed only for length) — ux's "honest for devs" tier.
 function isMachine(heading: string): boolean {
   return /machine summary|submitted|submit[-\s]?log/i.test(heading);
+}
+
+function isVerdictHeading(heading: string): boolean {
+  return /\bverdict\b/i.test(heading);
+}
+
+function isInterviewPlan(heading: string, letter: string | null): boolean {
+  return letter === "F" || /interview\s*plan|star\+?r/i.test(heading);
 }
 
 // A one-line teaser for a collapsed content section — drops the interaction cost
@@ -160,15 +167,14 @@ export function ReportView({
             if (sections.length === 0) {
               return (
                 <article className="report-prose mt-8">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{meta?.body ?? report}</ReactMarkdown>
+                  <ReportMarkdown>{meta?.body ?? report}</ReportMarkdown>
                 </article>
               );
             }
-            // Verdict (F) leads as a highlighted callout with no competing heading —
-            // it's THE answer. A/B stay expanded (fit detail); C–G collapse as
-            // content (with a 1-line preview); machine artifacts drop to a dimmer
-            // "Technical" tier so the CLI-DNA is present-but-clearly-secondary.
-            const verdict = sections.find((s) => s.letter === "F");
+            // Real "Verdict" headings lead as a callout. A/B/Interview Plan stay
+            // expanded; other blocks collapse (1-line preview); machine artifacts
+            // drop to a dimmer "Technical" tier.
+            const verdict = sections.find((s) => isVerdictHeading(s.heading));
             const rest = sections.filter((s) => s !== verdict);
             const machine = rest.filter((s) => isMachine(s.heading));
             const mainSections = rest.filter((s) => !isMachine(s.heading));
@@ -177,7 +183,7 @@ export function ReportView({
               <div className="mt-8">
                 {intro && (
                   <article className="report-prose">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{intro}</ReactMarkdown>
+                    <ReportMarkdown>{intro}</ReportMarkdown>
                   </article>
                 )}
 
@@ -185,17 +191,21 @@ export function ReportView({
                   <div className="rounded-2xl border border-brand/25 bg-brand-soft/50 px-5 py-4">
                     <p className="mb-1 font-mono text-[11px] uppercase tracking-[0.16em] text-brand/80">Verdict</p>
                     <article className="report-prose [&_p]:font-medium [&_p]:text-foreground">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{verdict.content}</ReactMarkdown>
+                      <ReportMarkdown>{verdict.content}</ReportMarkdown>
                     </article>
                   </div>
                 )}
 
                 {mainSections.map((s, i) => {
-                  const expanded = s.letter === "A" || s.letter === "B" || (!anyAB && i === 0);
+                  const expanded =
+                    s.letter === "A" ||
+                    s.letter === "B" ||
+                    isInterviewPlan(s.heading, s.letter) ||
+                    (!anyAB && i === 0);
                   if (expanded) {
                     return (
                       <article key={i} className="report-prose mt-6">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{`## ${cleanHeading(s.heading)}\n\n${s.content}`}</ReactMarkdown>
+                        <ReportMarkdown>{`## ${cleanHeading(s.heading)}\n\n${s.content}`}</ReportMarkdown>
                       </article>
                     );
                   }
@@ -207,7 +217,7 @@ export function ReportView({
                         <ChevronDown className="ml-auto size-4 shrink-0 text-faint transition-transform group-open:rotate-180" />
                       </summary>
                       <div className="report-prose border-t border-border px-4 py-3">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.content}</ReactMarkdown>
+                        <ReportMarkdown>{s.content}</ReportMarkdown>
                       </div>
                     </details>
                   );
@@ -227,7 +237,7 @@ export function ReportView({
                           <ChevronDown className="ml-auto size-4 shrink-0 text-faint transition-transform group-open:rotate-180" />
                         </summary>
                         <div className="report-prose border-t border-border/60 px-4 py-3 opacity-80">
-                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.content}</ReactMarkdown>
+                          <ReportMarkdown>{s.content}</ReportMarkdown>
                         </div>
                       </details>
                     ))}
