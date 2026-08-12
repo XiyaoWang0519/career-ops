@@ -165,6 +165,8 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const capped = !showAll && !anyFacet;
   const visible = capped ? ordered.slice(0, BATCH) : ordered;
   const hiddenCount = hidden.length;
+  const visibleUrls = useMemo(() => visible.map((e) => e.job.url), [visible]);
+  const allVisibleSelected = visible.length > 0 && visible.every((e) => selected.has(e.job.url));
 
   const isShortlisted = (url: string) => shortlist.some((s) => s.url === url);
 
@@ -210,6 +212,17 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
       else n.add(url);
       return n;
     });
+  const toggleSelectAll = () => {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (allVisibleSelected) {
+        for (const url of visibleUrls) n.delete(url);
+      } else {
+        for (const url of visibleUrls) n.add(url);
+      }
+      return n;
+    });
+  };
   const saveSelected = () => {
     const add = enriched
       .filter((e) => selected.has(e.job.url) && !isShortlisted(e.job.url))
@@ -288,10 +301,21 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
 
       {/* batch header: fresh slice by default, or the full filtered set */}
       <div className="mt-4 flex items-baseline justify-between gap-3">
-        <p className="text-sm font-medium text-foreground">
-          {capped ? "Fresh — worth a look" : anyFacet ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}` : "All roles"}
-        </p>
-        {hiddenCount > 0 && <span className="text-xs text-faint">{hiddenCount} skipped this session</span>}
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <p className="text-sm font-medium text-foreground">
+            {capped ? "Fresh — worth a look" : anyFacet ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}` : "All roles"}
+          </p>
+          {visible.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              className="text-xs font-medium text-brand hover:text-brand/80 max-sm:min-h-[44px]"
+            >
+              {allVisibleSelected ? "Deselect all" : "Select all"}
+            </button>
+          )}
+        </div>
+        {hiddenCount > 0 && <span className="shrink-0 text-xs text-faint">{hiddenCount} skipped this session</span>}
       </div>
 
       {syncError && (
