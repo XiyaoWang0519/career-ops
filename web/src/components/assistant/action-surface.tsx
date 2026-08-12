@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Activity,
   ArrowUpRight,
@@ -10,7 +12,9 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Code2,
   Compass,
+  Eye,
   FileText,
   Loader2,
   Radar,
@@ -355,6 +359,7 @@ function CvWidget({ onPrompt }: { onPrompt: (prompt: string) => void }) {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<"preview" | "edit">("preview");
   useEffect(() => { void fetch("/api/cv").then((response) => response.json()).then((value) => setContent(typeof value.content === "string" ? value.content : "")).finally(() => setLoading(false)); }, []);
   const save = async () => {
     setSaving(true); setSaved(false);
@@ -362,8 +367,55 @@ function CvWidget({ onPrompt }: { onPrompt: (prompt: string) => void }) {
     setSaving(false); setSaved(response.ok);
   };
   return (
-    <WidgetShell icon={UserRound} title="Career profile source" footer={<><span className="text-[11px] text-muted">{saved ? "Saved with backup" : `${content.split(/\s+/).filter(Boolean).length} words`}</span><div className="flex gap-1.5"><CompactButton onClick={() => onPrompt("Review my CV and recommend the highest-impact improvement without inventing any facts.")}>Review</CompactButton><PrimaryButton onClick={() => void save()} disabled={loading || saving}>{saving ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />} Save</PrimaryButton></div></>}>
-      {loading ? <div className="flex items-center gap-2 py-8 text-[12px] text-muted"><Loader2 className="size-3.5 animate-spin text-brand" /> Loading CV…</div> : <textarea value={content} onChange={(event) => { setContent(event.target.value); setSaved(false); }} aria-label="CV markdown" className="h-40 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground outline-none focus:border-brand/60" />}
+    <WidgetShell
+      icon={UserRound}
+      title="Career profile source"
+      footer={
+        <>
+          <span className="text-[11px] text-muted">{saved ? "Saved with backup" : `${content.split(/\s+/).filter(Boolean).length} words`}</span>
+          <div className="flex gap-1.5">
+            <CompactButton
+              aria-pressed={mode === "preview"}
+              onClick={() => setMode((current) => (current === "preview" ? "edit" : "preview"))}
+              disabled={loading}
+            >
+              {mode === "preview" ? <Code2 className="size-3" /> : <Eye className="size-3" />}
+              {mode === "preview" ? "Edit" : "Preview"}
+            </CompactButton>
+            <CompactButton onClick={() => onPrompt("Review my CV and recommend the highest-impact improvement without inventing any facts.")}>Review</CompactButton>
+            <PrimaryButton onClick={() => void save()} disabled={loading || saving}>
+              {saving ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />} Save
+            </PrimaryButton>
+          </div>
+        </>
+      }
+    >
+      {loading ? (
+        <div className="flex items-center gap-2 py-8 text-[12px] text-muted">
+          <Loader2 className="size-3.5 animate-spin text-brand" /> Loading CV…
+        </div>
+      ) : mode === "edit" ? (
+        <textarea
+          value={content}
+          onChange={(event) => {
+            setContent(event.target.value);
+            setSaved(false);
+          }}
+          aria-label="CV markdown"
+          className="h-40 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 font-mono text-[11px] leading-relaxed text-foreground outline-none focus:border-brand/60"
+        />
+      ) : (
+        <article
+          aria-label="CV preview"
+          className="report-prose h-40 overflow-y-auto rounded-xl border border-border bg-background px-3 py-2 text-[12px] leading-relaxed [&_*]:my-1 [&>:first-child]:mt-0 [&>:last-child]:mb-0 [&_h1]:mb-2 [&_h1]:mt-0 [&_h1]:text-base [&_h2]:mb-1.5 [&_h2]:mt-3 [&_h2]:text-[13px] [&_h3]:text-[12.5px]"
+        >
+          {content.trim() ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          ) : (
+            <p className="text-muted">No CV content yet.</p>
+          )}
+        </article>
+      )}
     </WidgetShell>
   );
 }
