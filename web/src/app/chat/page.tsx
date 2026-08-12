@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, History as HistoryIcon, PanelLeftClose, PanelLeftOpen, Plus, Send, Settings, Sparkles, Trash2, X } from "lucide-react";
+import { ArrowUpRight, History as HistoryIcon, PanelLeftClose, PanelLeftOpen, Plus, Settings, Sparkles, Trash2, X } from "lucide-react";
 import { ThinkingOrb } from "thinking-orbs";
 import { PartView, useAssistant } from "@/components/assistant/assistant-provider";
+import { PromptBar } from "@/components/assistant/prompt-bar";
 import { ThinkingStatus } from "@/components/assistant/thinking-status";
 import { cn } from "@/lib/cn";
 
@@ -128,6 +129,9 @@ export default function ChatPage() {
     busy,
     progress,
     cliId,
+    clis,
+    clisPinned,
+    selectCli,
     suggestions,
     send,
     resetChat,
@@ -138,18 +142,10 @@ export default function ChatPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyCollapsed, setHistoryCollapsed] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, progress]);
-
-  useEffect(() => {
-    const textarea = inputRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [input]);
 
   useEffect(() => {
     if (!historyOpen) return;
@@ -323,34 +319,18 @@ export default function ChatPage() {
           </Link>
         )}
 
-        <div className="rounded-2xl border border-border bg-surface p-1.5 shadow-lg shadow-black/[0.03]">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  send();
-                }
-              }}
-              placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
-              rows={1}
-              disabled={!cliId}
-              className="max-h-44 min-h-10 flex-1 resize-none bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-faint disabled:opacity-50"
-            />
-            <button
-              type="button"
-              onClick={() => send()}
-              disabled={busy || !input.trim() || !cliId}
-              className="rounded-xl bg-brand p-2.5 text-brand-foreground transition-colors hover:bg-brand-200 disabled:opacity-40"
-              aria-label="Send message"
-            >
-              <Send className="size-4" />
-            </button>
-          </div>
-        </div>
+        <PromptBar
+          value={input}
+          onChange={setInput}
+          onSend={(text) => send(text)}
+          disabled={!cliId}
+          busy={busy}
+          placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
+          cliId={cliId}
+          clis={clis}
+          clisPinned={clisPinned}
+          onCliChange={selectCli}
+        />
         </div>
       </section>
     </div>

@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Send, X, Loader2, Settings, RotateCcw, ArrowUpRight, Sparkles } from "lucide-react";
+import { X, Settings, RotateCcw, ArrowUpRight, Sparkles } from "lucide-react";
 import { CoMark } from "@/components/co-mark";
 import { useJobs } from "@/components/jobs/job-store";
 import { usePipeline } from "@/components/pipeline/pipeline-provider";
@@ -20,15 +20,26 @@ import { cn } from "@/lib/cn";
 import { resolveClientCliId } from "@/lib/client-cli";
 import { useRuntime } from "@/components/runtime-provider";
 import { Button } from "@/components/ui/button";
-import { ThinkingOrb } from "thinking-orbs";
 import { stripLegacyCodexDiagnostics } from "@/lib/codex-stream.mjs";
 import { explicitApplyUrl } from "@/lib/apply-intent.mjs";
 import { ThinkingStatus, type AssistantProgress } from "@/components/assistant/thinking-status";
 import { AssistantActionWidget } from "@/components/assistant/action-surface";
+import { PromptBar } from "@/components/assistant/prompt-bar";
 import {
   assistantProgressForReasoning,
   assistantProgressForTool,
 } from "@/lib/assistant-progress.mjs";
+
+const CONFIG_KEY = "career-ops:config";
+const CLI_TAGS: Record<string, string> = {
+  claude: "Flagship",
+  codex: "Flagship",
+  gemini: "Google",
+  opencode: "Open",
+  copilot: "GitHub",
+  qwen: "Alibaba",
+  antigravity: "Free tier",
+};
 
 // ── message model: messages are PART arrays so a live worker card can render
 // inline next to text, both fed by the single JobsProvider store ──────────────
@@ -302,6 +313,12 @@ function restoreChatHistory(raw: unknown): StoredChatHistory | null {
 
 type Suggestion = { label: string; send: string };
 
+export type AssistantCliOption = {
+  key: string;
+  name: string;
+  tag: string;
+};
+
 type AssistantContextValue = {
   messages: Msg[];
   threads: ChatThread[];
@@ -311,6 +328,9 @@ type AssistantContextValue = {
   busy: boolean;
   progress: AssistantProgress | null;
   cliId: string | null;
+  clis: AssistantCliOption[];
+  clisPinned: boolean;
+  selectCli: (id: string) => void;
   suggestions: Suggestion[];
   send: (forced?: string) => void;
   resetChat: () => void;
@@ -335,6 +355,8 @@ export function useAssistant() {
 export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [cliId, setCliId] = useState<string | null>(null);
+  const [clis, setClis] = useState<AssistantCliOption[]>([]);
+  const [clisPinned, setClisPinned] = useState(false);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [threads, setThreads] = useState<ChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState("");
@@ -381,6 +403,45 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("storage", read);
     return () => window.removeEventListener("storage", read);
   }, [runtime.defaultCli]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/clis")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const installed = (d.clis as Array<{ id: string; name: string; installed?: boolean }> | undefined)
+          ?.filter((c) => c.installed)
+          .map((c) => ({
+            key: c.id,
+            name: c.name,
+            tag: CLI_TAGS[c.id] ?? "Installed",
+          })) ?? [];
+        setClis(installed);
+        setClisPinned(Boolean(d.pinned));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setClis([]);
+          setClisPinned(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function selectCli(id: string) {
+    if (runtime.pinned || clisPinned) return;
+    setCliId(id);
+    try {
+      const raw = localStorage.getItem(CONFIG_KEY);
+      const prev = raw ? JSON.parse(raw) : {};
+      localStorage.setItem(CONFIG_KEY, JSON.stringify({ ...prev, mode: "cli", cliId: id }));
+    } catch {
+      /* localStorage unavailable */
+    }
+  }
 
   // Restore the multi-chat archive, migrating the original single-conversation
   // localStorage value on first load. Reattach any in-flight assistant turn
@@ -1083,6 +1144,9 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     busy,
     progress,
     cliId,
+    clis,
+    clisPinned: clisPinned || runtime.pinned,
+    selectCli,
     suggestions,
     send,
     resetChat,
@@ -1177,30 +1241,18 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           )}
 
           <div className="border-t border-border p-3">
-            <div className="flex items-end gap-2">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
-                rows={1}
-                disabled={!cliId}
-                className="max-h-32 flex-1 resize-none rounded-xl border border-border bg-surface/60 px-3 py-2 text-sm outline-none transition-colors placeholder:text-faint focus:border-brand/50 disabled:opacity-50"
-              />
-              <button
-                onClick={() => send()}
-                disabled={busy || !input.trim() || !cliId}
-                className="rounded-xl bg-brand p-2 text-brand-foreground transition-colors hover:bg-brand-200 disabled:opacity-40"
-                aria-label="Send"
-              >
-                {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </button>
-            </div>
+            <PromptBar
+              value={input}
+              onChange={setInput}
+              onSend={(text) => send(text)}
+              disabled={!cliId}
+              busy={busy}
+              placeholder={cliId ? "Ask anything…" : "Connect an AI tool first"}
+              cliId={cliId}
+              clis={clis}
+              clisPinned={clisPinned || runtime.pinned}
+              onCliChange={selectCli}
+            />
           </div>
           </div>
         </div>
