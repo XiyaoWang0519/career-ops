@@ -2,6 +2,13 @@ import { spawn } from "node:child_process";
 import { resolveCliOrDefault } from "@/lib/clis";
 import { careerOpsRoot, readMemory, doctorState } from "@/lib/career-ops";
 import { codexStderrSummary, parseCodexLine } from "@/lib/codex-stream.mjs";
+import {
+  attachRunKiller,
+  createActiveRun,
+  finishActiveRun,
+  pushRunEvent,
+  subscribeActiveRun,
+} from "@/lib/core/active-runs";
 
 export const runtime = "nodejs"; // child_process (spawn) requires the Node runtime
 export const dynamic = "force-dynamic";
@@ -19,13 +26,13 @@ The args are a single JSON object. The dashboard parses the envelope and perform
 
 ACTIONS:
 - navigate {"path":"/pipeline?tab=OFFER&min=4"} — open a section for the user. On the Assistant page the app renders a compact, agent-native widget with the relevant data and controls inside the conversation; it never embeds or copies the destination page. Elsewhere it navigates normally. Valid paths: /, /chat, /explore, /pipeline, /followups, /portals, /analytics, /cv, /config, /apply, /pipeline/{n} (a report), /jobs/{id} (a worker). The path may carry a query string.
-- filterPipeline {"tab":"OFFER","min":4,"q":"text","sort":"score","dir":-1} — filter the pipeline table in place. tab ∈ INBOX, ALL, EVALUATED, APPLIED, RESPONDED, INTERVIEW, OFFER, HIRED, REJECTED, DISCARDED, SKIP; min = score floor 0–5.
+- filterPipeline {"tab":"OFFER","min":4,"q":"text","sort":"score","dir":-1} — filter the pipeline table in place. tab ∈ INBOX, ALL, EVALUATED, PURSUING, APPLIED, RESPONDED, INTERVIEW, OFFER, HIRED, REJECTED, DISCARDED, SKIP; min = score floor 0–5.
 - explore {"positive":["AI infrastructure","ML performance"],"allow":["Toronto","Remote"],"since":14,"run":true} — prepare or run the free deterministic role scan. On the Assistant page a compact native search widget shows filters, progress, results, Save, and Evaluate controls below the reply.
 - evaluate {"url":"https://…","title":"Evaluate · Acme","subtitle":"Role"} — spin ONE read-only evaluation worker on a SPECIFIC posting URL. Only when you actually have a real URL (e.g. from the page the user is on).
 - evaluateCompany {"company":"Anthropic"} — evaluate ALL of the user's PENDING inbox postings for that company. Emit the COMPANY NAME ONLY — never URLs; the app resolves the concrete postings itself. Big batches ask the user to confirm first.
 - research {"target":"https://… or 'my portfolio'","title":"Research · X"} — spin a read-only research worker.
 - generatePdf {"n":"42"} — generate an ATS-optimized CV tailored to application #42 (runs the real pdf mode → output/ + marks the tracker PDF column). Spends tokens.
-- setStatus {"n":"42","status":"Applied"} — move a tracked application to a new state (asks the user to confirm first). Canonical states: Evaluated, Applied, Responded, Interview, Offer, Hired, Rejected, Discarded, SKIP. Use the application number (the "#42" on its report page).
+- setStatus {"n":"42","status":"Applied"} — move a tracked application to a new state (asks the user to confirm first). Canonical states: Evaluated, Pursuing, Applied, Responded, Interview, Offer, Hired, Rejected, Discarded, SKIP. Use the application number (the "#42" on its report page).
 - apply {"url":"https://…"} — open the real application in a live browser card inside this conversation. The agent may navigate/fill, the user can take control for login/CAPTCHA/review, and only the user submits.
 - setApplyField {"field":"Why this role?","value":"<the answer>"} — write or revise an answer in the apply form the user is filling (only when an APPLY FORM is shown in your context). Use the field's label or id. When the user asks to make an answer shorter/sharper/etc, generate the new text and emit this.
 - remember {"fact":"the concise fact"} — durably remember a preference/fact about the user (carries across sessions and across whichever CLI runs).
@@ -49,16 +56,27 @@ Keep replies short, warm, and useful. Don't dump raw files or narrate internal d
 type Msg = { role: "user" | "assistant"; content: string };
 
 export async function POST(req: Request) {
-  let body: { message?: string; cliId?: string; history?: Msg[]; pageContext?: string };
+  let body: {
+    message?: string;
+    cliId?: string;
+    history?: Msg[];
+    pageContext?: string;
+    id?: string;
+    threadId?: string;
+  };
   try {
     body = await req.json();
   } catch {
     return new Response(JSON.stringify({ error: "bad json" }), { status: 400 });
   }
-  const { message, cliId, pageContext } = body;
+  const { message, cliId, pageContext, threadId } = body;
   if (!message) {
     return new Response(JSON.stringify({ error: "message required" }), { status: 400 });
   }
+  const runId =
+    typeof body.id === "string" && body.id.trim()
+      ? body.id.trim().slice(0, 120)
+      : `chat-${Date.now()}-srv`;
 
   const resolved = resolveCliOrDefault(cliId);
   if (!resolved) {
@@ -116,157 +134,178 @@ export async function POST(req: Request) {
       ]
     : spec.args(prompt, "assistant");
 
+  try {
+    createActiveRun({
+      id: runId,
+      kind: "assistant",
+      input: message.slice(0, 500),
+      title: "Assistant",
+      subtitle: typeof threadId === "string" ? threadId : undefined,
+      page: typeof threadId === "string" ? threadId : undefined,
+      startedAt: Date.now(),
+    });
+  } catch {
+    return new Response(JSON.stringify({ error: "A chat turn with this id is already running" }), {
+      status: 409,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   // stdin must be closed: Codex treats an open pipe as additional prompt input
   // and waits for EOF before producing its final response.
   const child = spawn(binPath, args, { cwd: careerOpsRoot(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
 
-  const encoder = new TextEncoder();
-  // `closed` + kill timer in the OUTER scope so cancel() can flip `closed` before
-  // the child's late handlers run — otherwise they enqueue onto an already-closed
-  // controller and throw an uncaught "Controller is already closed" (see #1155).
-  let closed = false;
+  // Server-owned turn: HTTP cancel only unsubscribes. Page refresh must not
+  // SIGTERM the CLI mid-reply.
+  let finished = false;
   let killer: ReturnType<typeof setTimeout> | undefined;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let buf = "";
-      let codexStderr = "";
-      let codexError = "";
-      let codexPendingText = "";
-      let codexVisibleText = "";
-      let emittedAnswer = false;
-      let lastTokens = 0;
-      killer = setTimeout(() => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          /* ignore */
-        }
-      }, 90_000);
-      const safeClose = () => {
-        if (!closed) {
-          closed = true;
-          if (killer) clearTimeout(killer);
-          try {
-            controller.close();
-          } catch {
-            /* already closed */
-          }
-        }
-      };
-      const safeEnqueue = (s: string): boolean => {
-        if (closed || !s) return false;
-        try {
-          controller.enqueue(encoder.encode(s));
-          return true;
-        } catch {
-          closed = true; // controller already closed underneath us — stop, never crash
-          return false;
-        }
-      };
-      const send = (event: unknown) => safeEnqueue(`${JSON.stringify(event)}\n`);
-      const emitText = (s: string) => {
-        if (send({ type: "text", text: s })) emittedAnswer = true;
-      };
-      // Codex builds may publish agent_message updates either as cumulative
-      // snapshots or token-like deltas, followed by the same completed text.
-      // Normalize both shapes so the final answer streams once.
-      const emitCodexText = (text: string) => {
-        if (!text || text === codexVisibleText) return;
-        if (text.startsWith(codexVisibleText)) {
-          emitText(text.slice(codexVisibleText.length));
-          codexVisibleText = text;
-          return;
-        }
-        emitText(text);
-        codexVisibleText += text;
-      };
+  let buf = "";
+  let codexStderr = "";
+  let codexError = "";
+  let codexPendingText = "";
+  let codexVisibleText = "";
+  let emittedAnswer = false;
+  let lastTokens = 0;
 
-      child.stdout.on("data", (d: Buffer) => {
-        if (closed) return;
-        if (!isClaude && !isCodex) {
-          emitText(d.toString());
-          return;
-        }
-        // line-buffered CLI JSON → normalized assistant NDJSON events
-        buf += d.toString();
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          if (isCodex) {
-            for (const event of parseCodexLine(line)) {
-              if (event.type === "text") {
-                if (event.phase === "final_answer") emitCodexText(event.text);
-                else codexPendingText = event.text;
-              }
-              else if (event.type === "reasoning") send(event);
-              else if (event.type === "tool") send(event);
-              else if (event.type === "status") send(event);
-              else if (event.type === "error") codexError = event.msg;
-              else if (event.type === "tokens") {
-                lastTokens = event.tokens;
-                if (codexPendingText && !emittedAnswer) emitCodexText(codexPendingText);
-              }
-            }
-            continue;
-          }
-          try {
-            const obj = JSON.parse(line);
-            if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
-              const text = obj.event.delta?.text;
-              if (typeof text === "string") emitText(text);
-            }
-          } catch {
-            /* partial / non-json line — skip */
-          }
-        }
-      });
-      child.stderr.on("data", (d: Buffer) => {
-        const s = d.toString();
-        if (isCodex) {
-          codexStderr = (codexStderr + s).slice(-12_000);
-          return;
-        }
-        if (/error|not found|denied|fatal/i.test(s)) {
-          send({ type: "error", msg: `[${spec.name}] ${s.trim()}`.slice(0, 300) });
-        }
-      });
-      child.on("error", (e) => {
-        send({ type: "error", msg: `Error launching ${spec.name}: ${e.message}` });
-        safeClose();
-      });
-      child.on("close", (code, signal) => {
-        if (!emittedAnswer && codexPendingText && code === 0 && !signal) emitCodexText(codexPendingText);
-        if (!emittedAnswer) {
-          const summary = isCodex ? codexError || codexStderrSummary(codexStderr) : "";
-          send({
-            type: summary || signal ? "error" : "text",
-            ...(summary || signal
-              ? { msg: summary ? `Codex: ${summary}` : "Codex timed out before completing the response." }
-              : { text: "_(no output — is the AI tool signed in?)_" }),
-          });
-        }
-        send({ type: "done", tokens: lastTokens });
-        safeClose();
-      });
-    },
-    cancel() {
-      closed = true;
-      if (killer) clearTimeout(killer);
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* ignore */
-      }
-    },
+  killer = setTimeout(() => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+  }, 90_000);
+
+  const finalize = (status: "done" | "error" = "done") => {
+    if (finished) return;
+    finished = true;
+    if (killer) clearTimeout(killer);
+    finishActiveRun(runId, status);
+  };
+
+  const send = (event: unknown) => {
+    if (finished) return;
+    pushRunEvent(runId, event);
+  };
+  const emitText = (s: string) => {
+    if (!s || finished) return;
+    send({ type: "text", text: s });
+    emittedAnswer = true;
+  };
+  // Codex builds may publish agent_message updates either as cumulative
+  // snapshots or token-like deltas, followed by the same completed text.
+  // Normalize both shapes so the final answer streams once.
+  const emitCodexText = (text: string) => {
+    if (!text || text === codexVisibleText) return;
+    if (text.startsWith(codexVisibleText)) {
+      emitText(text.slice(codexVisibleText.length));
+      codexVisibleText = text;
+      return;
+    }
+    emitText(text);
+    codexVisibleText += text;
+  };
+
+  attachRunKiller(runId, () => {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
   });
+
+  child.stdout.on("data", (d: Buffer) => {
+    if (finished) return;
+    if (!isClaude && !isCodex) {
+      emitText(d.toString());
+      return;
+    }
+    // line-buffered CLI JSON → normalized assistant NDJSON events
+    buf += d.toString();
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line) continue;
+      if (isCodex) {
+        for (const event of parseCodexLine(line)) {
+          if (event.type === "text") {
+            if (event.phase === "final_answer") emitCodexText(event.text);
+            else codexPendingText = event.text;
+          } else if (event.type === "reasoning") send(event);
+          else if (event.type === "tool") send(event);
+          else if (event.type === "status") send(event);
+          else if (event.type === "error") codexError = event.msg;
+          else if (event.type === "tokens") {
+            lastTokens = event.tokens;
+            if (codexPendingText && !emittedAnswer) emitCodexText(codexPendingText);
+          }
+        }
+        continue;
+      }
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === "stream_event" && obj.event?.type === "content_block_delta") {
+          const text = obj.event.delta?.text;
+          if (typeof text === "string") emitText(text);
+        }
+      } catch {
+        /* partial / non-json line — skip */
+      }
+    }
+  });
+  child.stderr.on("data", (d: Buffer) => {
+    const s = d.toString();
+    if (isCodex) {
+      codexStderr = (codexStderr + s).slice(-12_000);
+      return;
+    }
+    if (/error|not found|denied|fatal/i.test(s)) {
+      send({ type: "error", msg: `[${spec.name}] ${s.trim()}`.slice(0, 300) });
+    }
+  });
+  child.on("error", (e) => {
+    send({ type: "error", msg: `Error launching ${spec.name}: ${e.message}` });
+    finalize("error");
+  });
+  child.on("close", (code, signal) => {
+    if (finished) return;
+    let status: "done" | "error" = "done";
+    if (!emittedAnswer && codexPendingText && code === 0 && !signal) emitCodexText(codexPendingText);
+    if (!emittedAnswer) {
+      const summary = isCodex ? codexError || codexStderrSummary(codexStderr) : "";
+      if (summary || signal) {
+        send({
+          type: "error",
+          msg: summary ? `Codex: ${summary}` : "Codex timed out before completing the response.",
+        });
+        status = "error";
+      } else {
+        send({ type: "text", text: "_(no output — is the AI tool signed in?)_" });
+      }
+    }
+    send({ type: "done", tokens: lastTokens });
+    finalize(status);
+  });
+
+  const stream = subscribeActiveRun(runId);
+  if (!stream) {
+    try {
+      child.kill("SIGTERM");
+    } catch {
+      /* ignore */
+    }
+    return new Response(JSON.stringify({ error: "Failed to attach to chat stream" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 
   return new Response(stream, {
     headers: {
       "Content-Type": "application/x-ndjson; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Accel-Buffering": "no",
+      "X-Career-Ops-Run-Id": runId,
     },
   });
 }

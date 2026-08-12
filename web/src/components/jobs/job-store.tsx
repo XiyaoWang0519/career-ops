@@ -366,7 +366,10 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
       for (const j of persisted) byId.set(j.id, j);
       for (const j of resolvedLocal) byId.set(j.id, j);
       // Server-owned workers the tab doesn't know about yet (other tab / cleared storage).
+      // Ignore non-job kinds (e.g. assistant chat turns share the same registry).
+      const JOB_KINDS = new Set(["evaluate", "pdf", "research", "fix-portal"]);
       for (const run of serverRuns) {
+        if (!JOB_KINDS.has(run.kind)) continue;
         if (byId.has(run.id)) continue;
         byId.set(run.id, jobFromServerRun(run));
         if (run.status === "running" || run.status === "done" || run.status === "error") {

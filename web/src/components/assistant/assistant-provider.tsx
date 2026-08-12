@@ -109,6 +109,7 @@ function restoreBrowserLaunches(messages: Msg[]): Msg[] {
 
 const LEGACY_CHAT_KEY = "career-ops:chat";
 const CHAT_HISTORY_KEY = "career-ops:chat-history:v1";
+const CHAT_PENDING_KEY = "career-ops:chat-pending:v1";
 const MAX_CHAT_THREADS = 40;
 const MAX_MESSAGES_PER_THREAD = 30;
 const MIN_PROGRESS_DISPLAY_MS = 600;
@@ -246,6 +247,29 @@ function serializableMessages(messages: Msg[]): Msg[] {
   }));
 }
 
+type PendingChatTurn = { runId: string; threadId: string };
+
+function readPendingTurn(): PendingChatTurn | null {
+  try {
+    const raw = localStorage.getItem(CHAT_PENDING_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingChatTurn>;
+    if (typeof parsed.runId !== "string" || typeof parsed.threadId !== "string") return null;
+    return { runId: parsed.runId, threadId: parsed.threadId };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingTurn(pending: PendingChatTurn | null): void {
+  try {
+    if (!pending) localStorage.removeItem(CHAT_PENDING_KEY);
+    else localStorage.setItem(CHAT_PENDING_KEY, JSON.stringify(pending));
+  } catch {
+    /* ignore */
+  }
+}
+
 function restoreChatHistory(raw: unknown): StoredChatHistory | null {
   if (!raw || typeof raw !== "object" || !Array.isArray((raw as { threads?: unknown }).threads)) return null;
   const restored = (raw as { threads: unknown[] }).threads
@@ -343,6 +367,10 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const busyRef = useRef(busy);
   busyRef.current = busy;
   const historyHydratedRef = useRef(false);
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
+  const listeningTurnRef = useRef<string | null>(null);
+  const reattachTurnRef = useRef<((runId: string, threadId: string) => Promise<void>) | null>(null);
 
   // selected AI tool from Config, or server-pinned default
   useEffect(() => {
@@ -355,44 +383,83 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   }, [runtime.defaultCli]);
 
   // Restore the multi-chat archive, migrating the original single-conversation
-  // localStorage value on first load.
+  // localStorage value on first load. Reattach any in-flight assistant turn
+  // that survived a page refresh on the server.
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(CHAT_HISTORY_KEY);
-      const restored = stored ? restoreChatHistory(JSON.parse(stored)) : null;
-      if (restored) {
-        const active = restored.threads.find((thread) => thread.id === restored.activeThreadId)!;
-        setThreads(restored.threads);
-        setActiveThreadId(active.id);
-        setMessages(active.messages);
-      } else {
-        const legacy = localStorage.getItem(LEGACY_CHAT_KEY);
-        const legacyMessages = legacy ? migrate(JSON.parse(legacy)) : null;
+    let cancelled = false;
+    (async () => {
+      let restoredActiveId = "";
+      try {
+        const stored = localStorage.getItem(CHAT_HISTORY_KEY);
+        const restored = stored ? restoreChatHistory(JSON.parse(stored)) : null;
+        if (restored) {
+          const active = restored.threads.find((thread) => thread.id === restored.activeThreadId)!;
+          setThreads(restored.threads);
+          setActiveThreadId(active.id);
+          setMessages(active.messages);
+          restoredActiveId = active.id;
+        } else {
+          const legacy = localStorage.getItem(LEGACY_CHAT_KEY);
+          const legacyMessages = legacy ? migrate(JSON.parse(legacy)) : null;
+          const now = Date.now();
+          const thread: ChatThread = {
+            id: createThreadId(),
+            title: titleForMessages(legacyMessages ?? []),
+            messages: restoreBrowserLaunches(sanitizeAssistantMessages(legacyMessages ?? [])),
+            createdAt: now,
+            updatedAt: now,
+          };
+          setThreads([thread]);
+          setActiveThreadId(thread.id);
+          setMessages(thread.messages);
+          restoredActiveId = thread.id;
+        }
+      } catch {
         const now = Date.now();
         const thread: ChatThread = {
           id: createThreadId(),
-          title: titleForMessages(legacyMessages ?? []),
-          messages: restoreBrowserLaunches(sanitizeAssistantMessages(legacyMessages ?? [])),
+          title: "New conversation",
+          messages: [],
           createdAt: now,
           updatedAt: now,
         };
         setThreads([thread]);
         setActiveThreadId(thread.id);
-        setMessages(thread.messages);
+        restoredActiveId = thread.id;
       }
-    } catch {
-      const now = Date.now();
-      const thread: ChatThread = {
-        id: createThreadId(),
-        title: "New conversation",
-        messages: [],
-        createdAt: now,
-        updatedAt: now,
-      };
-      setThreads([thread]);
-      setActiveThreadId(thread.id);
-    }
-    historyHydratedRef.current = true;
+      historyHydratedRef.current = true;
+      if (cancelled) return;
+
+      const pending = readPendingTurn();
+      if (!pending || pending.threadId !== restoredActiveId) {
+        if (pending) writePendingTurn(null);
+        return;
+      }
+      try {
+        const res = await fetch("/api/runs/active");
+        if (!res.ok) {
+          writePendingTurn(null);
+          return;
+        }
+        const data = await res.json();
+        const runs = Array.isArray(data.runs) ? data.runs : [];
+        const alive = runs.some(
+          (run: { id?: string; kind?: string }) => run.id === pending.runId && run.kind === "assistant",
+        );
+        if (!alive) {
+          writePendingTurn(null);
+          return;
+        }
+      } catch {
+        writePendingTurn(null);
+        return;
+      }
+      if (cancelled) return;
+      void reattachTurnRef.current?.(pending.runId, pending.threadId);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fast Refresh preserves React state, so migration alone cannot clean a chat
@@ -651,18 +718,188 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     return `\n\nAPPLY FORM — the user is filling "${ap.title}". Current answers:\n${lines}\nTo write or revise an answer, emit setApplyField {"field":"<label or id>","value":"<new text>"}. If a change reveals a durable preference or corrected fact, ALSO remember it.`;
   }
 
+  async function consumeAssistantStream(
+    res: Response,
+    opts: { dispatchActions: boolean; runId: string; threadId: string },
+  ) {
+    const shimsDone = new Set<string>();
+    if (!res.ok || !res.body) {
+      const err = await res.json().catch(() => ({}));
+      setStreamText(`⚠️ ${(err as { error?: string }).error || "Assistant unavailable."}`);
+      return;
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let wireBuffer = "";
+    let answer = "";
+    let sawTerminalEvent = false;
+    let progressChangedAt = 0;
+
+    const renderAnswer = () => {
+      const { complete, hidePartialFrom } = parseEnvelopes(answer);
+      const cuts: [number, number][] = complete.map((e) => [e.start, e.end]);
+      if (hidePartialFrom >= 0) cuts.push([hidePartialFrom, answer.length]);
+      let display = removeRanges(answer, cuts);
+
+      // back-compat shims (strip + queue) on the cleaned text
+      const shimNavs: string[] = [];
+      const shimRems: string[] = [];
+      display = display.replace(NAV_RE, (_, p) => {
+        shimNavs.push(p);
+        return "";
+      });
+      display = display.replace(REMEMBER_RE, (_, f) => {
+        shimRems.push(String(f).trim());
+        return "";
+      });
+      setStreamText(display.trimStart());
+
+      if (!opts.dispatchActions) return;
+
+      for (const e of complete) {
+        const key = `${e.start}|${e.id}|${e.argsJson}`;
+        if (handledRef.current.has(key)) continue;
+        handledRef.current.add(key);
+        let args: Record<string, unknown>;
+        try {
+          args = JSON.parse(normalizeJson(e.argsJson));
+        } catch {
+          continue;
+        }
+        runDispatch(e.id, args);
+      }
+      for (const p of shimNavs) {
+        const k = `go:${p}`;
+        if (!shimsDone.has(k)) {
+          shimsDone.add(k);
+          runDispatch("navigate", { path: p });
+        }
+      }
+      for (const f of shimRems) {
+        const k = `rem:${f}`;
+        if (f && !shimsDone.has(k)) {
+          shimsDone.add(k);
+          runDispatch("remember", { fact: f });
+        }
+      }
+    };
+
+    const handleEvent = async (event: AssistantWireEvent) => {
+      if (event.type === "text") {
+        sawTerminalEvent = true;
+        const remaining = progressChangedAt
+          ? Math.max(0, MIN_PROGRESS_DISPLAY_MS - (Date.now() - progressChangedAt))
+          : 0;
+        if (remaining) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
+        }
+        setProgress(null);
+        progressChangedAt = 0;
+        answer += event.text;
+        renderAnswer();
+      } else if (event.type === "reasoning") {
+        setProgress(assistantProgressForReasoning(event.text) as AssistantProgress);
+        progressChangedAt = Date.now();
+      } else if (event.type === "tool") {
+        setProgress(assistantProgressForTool(event) as AssistantProgress);
+        progressChangedAt = Date.now();
+      } else if (event.type === "error") {
+        sawTerminalEvent = true;
+        setProgress(null);
+        progressChangedAt = 0;
+        setStreamText(`⚠️ ${event.msg}`);
+      } else if (event.type === "done") {
+        setProgress(null);
+        progressChangedAt = 0;
+      }
+    };
+
+    const drainEvents = async () => {
+      let nl: number;
+      while ((nl = wireBuffer.indexOf("\n")) !== -1) {
+        const line = wireBuffer.slice(0, nl).trim();
+        wireBuffer = wireBuffer.slice(nl + 1);
+        if (!line) continue;
+        try {
+          await handleEvent(JSON.parse(line) as AssistantWireEvent);
+        } catch {
+          /* malformed transport line — keep the rest of the stream alive */
+        }
+      }
+    };
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      wireBuffer += dec.decode(value, { stream: true });
+      await drainEvents();
+    }
+    wireBuffer += dec.decode();
+    if (wireBuffer.trim()) wireBuffer += "\n";
+    await drainEvents();
+    if (!sawTerminalEvent) setStreamText("_(no output — is the AI tool signed in?)_");
+  }
+
+  async function listenToTurn(
+    runId: string,
+    threadId: string,
+    res: Response,
+    opts: { dispatchActions: boolean },
+  ) {
+    if (listeningTurnRef.current === runId) return;
+    listeningTurnRef.current = runId;
+    writePendingTurn({ runId, threadId });
+    setBusy(true);
+    setProgress(null);
+    try {
+      await consumeAssistantStream(res, { ...opts, runId, threadId });
+    } catch {
+      setStreamText("⚠️ Connection error.");
+    } finally {
+      if (listeningTurnRef.current === runId) listeningTurnRef.current = null;
+      writePendingTurn(null);
+      setProgress(null);
+      setBusy(false);
+      router.refresh();
+      pipelineRef.current.refetch();
+    }
+  }
+
+  async function reattachTurn(runId: string, threadId: string) {
+    if (listeningTurnRef.current) return;
+    // Replay rebuilds the assistant bubble from the server buffer — clear the
+    // partial local text so deltas aren't duplicated after refresh. Skip
+    // action dispatch: envelopes already ran before the reload.
+    setMessages((current) => {
+      const copy = [...current];
+      for (let i = copy.length - 1; i >= 0; i--) {
+        if (copy[i].role === "assistant") {
+          const kept = copy[i].parts.filter((part) => part.type !== "text");
+          copy[i] = { ...copy[i], parts: [{ type: "text", text: "" }, ...kept] };
+          break;
+        }
+      }
+      return copy;
+    });
+    handledRef.current = new Set();
+    const res = await fetch(`/api/run/${encodeURIComponent(runId)}`);
+    await listenToTurn(runId, threadId, res, { dispatchActions: false });
+  }
+  reattachTurnRef.current = reattachTurn;
+
   async function send(forced?: string) {
     const text = (forced ?? input).trim();
     if (!text || busy || !cliId) return;
     if (forced === undefined) setInput("");
     const history = messages.filter((m) => msgText(m)).map((m) => ({ role: m.role, content: msgText(m) }));
+    const threadId = activeThreadIdRef.current || activeThreadId;
+    const runId = `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setMessages((m) => [...m, { role: "user", parts: [{ type: "text", text }] }, { role: "assistant", parts: [{ type: "text", text: "" }] }]);
-    setBusy(true);
-    setProgress(null);
     handledRef.current = new Set();
-    const shimsDone = new Set<string>();
     const applyUrl = explicitApplyUrl(text);
     if (applyUrl) {
+      setBusy(true);
+      setProgress(null);
       try {
         const sessionId = await applyRef.current.open(applyUrl, { prefill: true });
         if (!sessionId) {
@@ -679,136 +916,32 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
+      setBusy(true);
+      setProgress(null);
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, cliId, history, pageContext: describePage(pathname) + pipelineContext() + applyContext() }),
+        body: JSON.stringify({
+          id: runId,
+          threadId,
+          message: text,
+          cliId,
+          history,
+          pageContext: describePage(pathname) + pipelineContext() + applyContext(),
+        }),
       });
-      if (!res.ok || !res.body) {
-        const err = await res.json().catch(() => ({}));
-        setStreamText(`⚠️ ${err.error || "Assistant unavailable."}`);
-        return;
-      }
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let wireBuffer = "";
-      let answer = "";
-      let sawTerminalEvent = false;
-      let progressChangedAt = 0;
-
-      const renderAnswer = () => {
-        const { complete, hidePartialFrom } = parseEnvelopes(answer);
-        const cuts: [number, number][] = complete.map((e) => [e.start, e.end]);
-        if (hidePartialFrom >= 0) cuts.push([hidePartialFrom, answer.length]);
-        let display = removeRanges(answer, cuts);
-
-        // back-compat shims (strip + queue) on the cleaned text
-        const shimNavs: string[] = [];
-        const shimRems: string[] = [];
-        display = display.replace(NAV_RE, (_, p) => {
-          shimNavs.push(p);
-          return "";
-        });
-        display = display.replace(REMEMBER_RE, (_, f) => {
-          shimRems.push(String(f).trim());
-          return "";
-        });
-        setStreamText(display.trimStart());
-
-        for (const e of complete) {
-          const key = `${e.start}|${e.id}|${e.argsJson}`;
-          if (handledRef.current.has(key)) continue;
-          handledRef.current.add(key);
-          let args: Record<string, unknown>;
-          try {
-            args = JSON.parse(normalizeJson(e.argsJson));
-          } catch {
-            continue;
-          }
-          runDispatch(e.id, args);
-        }
-        for (const p of shimNavs) {
-          const k = `go:${p}`;
-          if (!shimsDone.has(k)) {
-            shimsDone.add(k);
-            runDispatch("navigate", { path: p });
-          }
-        }
-        for (const f of shimRems) {
-          const k = `rem:${f}`;
-          if (f && !shimsDone.has(k)) {
-            shimsDone.add(k);
-            runDispatch("remember", { fact: f });
-          }
-        }
-      };
-
-      const handleEvent = async (event: AssistantWireEvent) => {
-        if (event.type === "text") {
-          sawTerminalEvent = true;
-          const remaining = progressChangedAt
-            ? Math.max(0, MIN_PROGRESS_DISPLAY_MS - (Date.now() - progressChangedAt))
-            : 0;
-          if (remaining) {
-            await new Promise<void>((resolve) => window.setTimeout(resolve, remaining));
-          }
-          setProgress(null);
-          progressChangedAt = 0;
-          answer += event.text;
-          renderAnswer();
-        } else if (event.type === "reasoning") {
-          setProgress(assistantProgressForReasoning(event.text) as AssistantProgress);
-          progressChangedAt = Date.now();
-        } else if (event.type === "tool") {
-          setProgress(assistantProgressForTool(event) as AssistantProgress);
-          progressChangedAt = Date.now();
-        } else if (event.type === "error") {
-          sawTerminalEvent = true;
-          setProgress(null);
-          progressChangedAt = 0;
-          setStreamText(`⚠️ ${event.msg}`);
-        } else if (event.type === "done") {
-          setProgress(null);
-          progressChangedAt = 0;
-        }
-      };
-
-      const drainEvents = async () => {
-        let nl: number;
-        while ((nl = wireBuffer.indexOf("\n")) !== -1) {
-          const line = wireBuffer.slice(0, nl).trim();
-          wireBuffer = wireBuffer.slice(nl + 1);
-          if (!line) continue;
-          try {
-            await handleEvent(JSON.parse(line) as AssistantWireEvent);
-          } catch {
-            /* malformed transport line — keep the rest of the stream alive */
-          }
-        }
-      };
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        wireBuffer += dec.decode(value, { stream: true });
-        await drainEvents();
-      }
-      wireBuffer += dec.decode();
-      if (wireBuffer.trim()) wireBuffer += "\n";
-      await drainEvents();
-      if (!sawTerminalEvent) setStreamText("_(no output — is the AI tool signed in?)_");
+      await listenToTurn(runId, threadId, res, { dispatchActions: true });
     } catch {
+      writePendingTurn(null);
       setStreamText("⚠️ Connection error.");
-    } finally {
-      setProgress(null);
       setBusy(false);
-      router.refresh();
-      pipelineRef.current.refetch();
+      setProgress(null);
     }
   }
 
   function resetChat() {
     if (busy) return;
+    writePendingTurn(null);
     applyRef.current.reset();
     setProgress(null);
     setInput("");

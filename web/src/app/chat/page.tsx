@@ -114,7 +114,7 @@ function ChatHistoryPanel({ onClose, onCollapse }: { onClose?: () => void; onCol
       </nav>
 
       <p className="border-t border-border px-4 py-3 text-[11px] leading-4 text-faint">
-        Conversations are stored locally on this device.
+        Conversations survive refresh on this device.
       </p>
     </div>
   );
