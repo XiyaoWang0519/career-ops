@@ -1,6 +1,8 @@
 const STATUS_ALIASES = {
   evaluada: "EVALUATED",
   evaluado: "EVALUATED",
+  shortlisted: "PURSUING",
+  pursue: "PURSUING",
   aplicada: "APPLIED",
   aplicado: "APPLIED",
   enviada: "APPLIED",
@@ -45,6 +47,7 @@ export function stageIndexForStatus(status) {
   if (canonical.includes("INTERVIEW")) return 6;
   if (canonical.includes("RESPONDED")) return 5;
   if (canonical.includes("APPLIED")) return 4;
+  if (canonical.includes("PURSUING")) return 3;
   if (canonical.includes("EVALUATED")) return 2;
   return 1;
 }

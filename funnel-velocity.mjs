@@ -472,7 +472,7 @@ function selfTest() {
     '99\t2026-06-01\tEvaluated\tApplied\tset-status\torphan - not in tracker',
     'x\t2026-06-01\tEvaluated\tApplied\tset-status\tbad num',
     '7\t06/01/2026\tEvaluated\tApplied\tset-status\tbad date',
-    '8\t2026-06-01\tEvaluated\tShortlisted\tset-status\tnon-canonical state',
+    '8\t2026-06-01\tEvaluated\tCandidate\tset-status\tnon-canonical state',
     '',
     '# comment line',
   ].join('\n');

@@ -36,15 +36,18 @@ const STATUS_RANK = {
   'discarded': 0,
   'rejected': 1,
   'evaluated': 2,
-  'applied': 3,
-  'responded': 4,
-  'interview': 5,
-  'offer': 6,
+  'pursuing': 3,
+  'shortlisted': 3,
+  'pursue': 3,
+  'applied': 4,
+  'responded': 5,
+  'interview': 6,
+  'offer': 7,
   // Hired outranks everything: the accepted-job record must never lose a
   // dedup contest to a repost row (aliases from templates/states.yml).
-  'hired': 7,
-  'accepted': 7,
-  'accept': 7,
+  'hired': 8,
+  'accepted': 8,
+  'accept': 8,
   // Spanish aliases — kept for backwards compat with existing tracker data
   'no_aplicar': 0,
   'no aplicar': 0,
@@ -53,12 +56,12 @@ const STATUS_RANK = {
   'rechazado': 1,  // Terminal — below active states
   'rechazada': 1,
   'evaluada': 2,
-  'aplicado': 3,
-  'respondido': 4,
-  'entrevista': 5,
-  'oferta': 6,
-  'contratado': 7,
-  'contratada': 7,
+  'aplicado': 4,
+  'respondido': 5,
+  'entrevista': 6,
+  'oferta': 7,
+  'contratado': 8,
+  'contratada': 8,
 };
 
 /**

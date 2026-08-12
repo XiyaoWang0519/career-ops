@@ -428,6 +428,8 @@ func TestNormalizeStatus(t *testing.T) {
 
 		// English status strings
 		{"Evaluated", "evaluated"},
+		{"Pursuing", "pursuing"},
+		{"Shortlisted", "pursuing"},
 		{"Applied", "applied"},
 		{"Responded", "responded"},
 		{"Interview", "interview"},

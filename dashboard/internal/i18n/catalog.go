@@ -66,6 +66,7 @@ type Catalog struct {
 
 	// Status display names
 	StatusEvaluated string
+	StatusPursuing  string
 	StatusApplied   string
 	StatusResponded string
 	StatusInterview string
@@ -185,6 +186,8 @@ func (c *Catalog) StatusLabel(norm string) string {
 		return c.StatusResponded
 	case "applied":
 		return c.StatusApplied
+	case "pursuing":
+		return c.StatusPursuing
 	case "evaluated":
 		return c.StatusEvaluated
 	case "skip":
@@ -280,6 +283,7 @@ var En = Catalog{
 
 	// Status display names
 	StatusEvaluated: "Evaluated",
+	StatusPursuing:  "Pursuing",
 	StatusApplied:   "Applied",
 	StatusResponded: "Responded",
 	StatusInterview: "Interview",
@@ -408,6 +412,7 @@ var Tr = Catalog{
 
 	// Status display names
 	StatusEvaluated: "Değerlendirildi",
+	StatusPursuing:  "Sürdürülüyor",
 	StatusApplied:   "Başvuruldu",
 	StatusResponded: "Yanıt Verildi",
 	StatusInterview: "Mülakat",
@@ -536,6 +541,7 @@ var Es = Catalog{
 
 	// Status display names
 	StatusEvaluated: "Evaluada",
+	StatusPursuing:  "En curso",
 	StatusApplied:   "Aplicada",
 	StatusResponded: "Respondida",
 	StatusInterview: "Entrevista",

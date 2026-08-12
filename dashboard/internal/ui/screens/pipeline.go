@@ -202,6 +202,7 @@ type StatusPair struct {
 func getStatusPairs(currentNormalized string) []StatusPair {
 	base := []StatusPair{
 		{i18n.Current.StatusEvaluated, "Evaluated"},
+		{i18n.Current.StatusPursuing, "Pursuing"},
 		{i18n.Current.StatusApplied, "Applied"},
 		{i18n.Current.StatusResponded, "Responded"},
 		{i18n.Current.StatusInterview, "Interview"},

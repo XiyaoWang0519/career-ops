@@ -20,6 +20,7 @@ export type CanonicalState = {
 
 const FALLBACK: CanonicalState[] = [
   { id: "evaluated", label: "Evaluated", aliases: ["evaluada"], description: "Offer evaluated with report, pending decision", group: "evaluated" },
+  { id: "pursuing", label: "Pursuing", aliases: ["shortlisted", "pursue"], description: "Candidate chose to pursue the opportunity, application not yet submitted", group: "pursuing" },
   { id: "applied", label: "Applied", aliases: ["aplicado", "enviada", "aplicada", "sent"], description: "Application submitted", group: "applied" },
   { id: "responded", label: "Responded", aliases: ["respondido"], description: "Company has responded (not yet interview)", group: "responded" },
   { id: "interview", label: "Interview", aliases: ["entrevista"], description: "Active interview process", group: "interview" },

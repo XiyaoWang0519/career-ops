@@ -71,7 +71,7 @@ func TestComputeProgressMetricsRatesIncludeHired(t *testing.T) {
 // The cumulative tiers must stay ordered: each stage is a superset of the next.
 func TestComputeProgressMetricsFunnelIsMonotonic(t *testing.T) {
 	pm := ComputeProgressMetrics(appsWithStatuses(
-		"Evaluated", "Applied", "Responded", "Interview", "Offer", "Hired", "Rejected", "Discarded", "SKIP",
+		"Evaluated", "Pursuing", "Applied", "Responded", "Interview", "Offer", "Hired", "Rejected", "Discarded", "SKIP",
 	))
 
 	applied := stageCount(pm, "Applied")

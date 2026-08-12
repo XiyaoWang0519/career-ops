@@ -515,6 +515,8 @@ func NormalizeStatus(raw string) string {
 		return "offer"
 	case strings.Contains(s, "responded") || strings.Contains(s, "respondido") || strings.Contains(s, "yanıt verildi") || strings.Contains(s, "yanıt_verildi") || strings.Contains(s, "yanit verildi") || strings.Contains(s, "yanit_verildi"):
 		return "responded"
+	case s == "pursuing" || s == "shortlisted" || s == "pursue":
+		return "pursuing"
 	case strings.Contains(s, "applied") || strings.Contains(s, "aplicado") || s == "enviada" || s == "aplicada" || s == "sent" || strings.Contains(s, "başvuruldu") || strings.Contains(s, "basvuruldu"):
 		return "applied"
 	case strings.Contains(s, "rejected") || strings.Contains(s, "rechazado") || s == "rechazada" || strings.Contains(s, "reddedildi"):
@@ -860,7 +862,7 @@ func statusCellIndex(cells []string, canonicalIdx int, want string) int {
 // is safe to treat the cell as the Status column.
 func isCanonicalStatusValue(cell string) bool {
 	switch NormalizeStatus(cell) {
-	case "evaluated", "applied", "responded", "interview", "offer", "hired", "rejected", "discarded", "skip":
+	case "evaluated", "pursuing", "applied", "responded", "interview", "offer", "hired", "rejected", "discarded", "skip":
 		return true
 	}
 	return false
@@ -899,16 +901,18 @@ func StatusPriority(status string) int {
 		return 2
 	case "applied":
 		return 3
-	case "evaluated":
+	case "pursuing":
 		return 4
-	case "skip":
+	case "evaluated":
 		return 5
-	case "rejected":
+	case "skip":
 		return 6
-	case "discarded":
+	case "rejected":
 		return 7
-	default:
+	case "discarded":
 		return 8
+	default:
+		return 9
 	}
 }
 

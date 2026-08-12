@@ -11,16 +11,16 @@ export type AssistantProgress = { category: string; text: string; orb: OrbState 
  * Shared compact progress surface for every AI-assisted workflow. It renders
  * only sanitized summaries and plain-language tool activity supplied by the
  * caller; raw model reasoning is never accepted by this component.
+ *
+ * Size is fixed so status text swaps never reflow the surrounding chat.
  */
 export function ThinkingStatus({ progress }: { progress?: AssistantProgress | null }) {
   const nextProgress = progress ?? (DEFAULT_ASSISTANT_PROGRESS as AssistantProgress);
   const [displayedProgress, setDisplayedProgress] = useState<AssistantProgress>(nextProgress);
   const [phase, setPhase] = useState<"" | "is-exit" | "is-enter-start">("");
   const contentRef = useRef<HTMLSpanElement>(null);
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   const nextKey = `${nextProgress.orb}|${nextProgress.category}|${nextProgress.text}`;
   const displayedKey = `${displayedProgress.orb}|${displayedProgress.category}|${displayedProgress.text}`;
-  const needsWrappedWidth = displayedProgress.text.length > 56;
 
   useEffect(() => {
     if (nextKey === displayedKey) return;
@@ -38,22 +38,6 @@ export function ThinkingStatus({ progress }: { progress?: AssistantProgress | nu
   }, [displayedKey, nextKey, nextProgress]);
 
   useLayoutEffect(() => {
-    const content = contentRef.current;
-    if (!content) return;
-    const measure = () => {
-      const bounds = content.getBoundingClientRect();
-      setSize({
-        width: Math.ceil(bounds.width + 2),
-        height: Math.ceil(bounds.height + 2),
-      });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [displayedProgress]);
-
-  useLayoutEffect(() => {
     if (phase !== "is-enter-start" || !contentRef.current) return;
     void contentRef.current.offsetHeight;
     const frame = window.requestAnimationFrame(() => setPhase(""));
@@ -62,17 +46,14 @@ export function ThinkingStatus({ progress }: { progress?: AssistantProgress | nu
 
   return (
     <div
-      className="t-resize inline-block max-w-full overflow-hidden rounded-2xl border border-border bg-surface align-top shadow-sm"
-      style={size ? { width: size.width, height: size.height } : undefined}
+      className="box-border overflow-hidden rounded-2xl border border-border bg-surface shadow-sm"
+      style={{ width: 288, height: 72 }}
       role="status"
       aria-live="polite"
       aria-label={`${displayedProgress.category}: ${displayedProgress.text}`}
     >
-      <span
-        ref={contentRef}
-        className={cn("t-text-swap block w-fit max-w-[min(72vw,40rem)] px-4 py-4", phase)}
-      >
-        <span className="flex min-w-0 items-center gap-2">
+      <span ref={contentRef} className={cn("t-text-swap h-full w-full", phase)}>
+        <span className="flex h-full w-full items-center gap-2 px-4">
           <ThinkingOrb
             state={displayedProgress.orb}
             size={64}
@@ -80,15 +61,12 @@ export function ThinkingStatus({ progress }: { progress?: AssistantProgress | nu
             aria-label={`${displayedProgress.category.toLowerCase()} in progress`}
             className="shrink-0"
           />
-          <span className="block min-w-0 max-w-[34rem] text-left">
-            <span className="block text-[10px] font-semibold uppercase leading-3 tracking-[0.16em] text-faint">
+          <span className="block min-w-0 flex-1 overflow-hidden text-left">
+            <span className="block truncate text-[10px] font-semibold uppercase leading-3 tracking-[0.16em] text-faint">
               {displayedProgress.category}
             </span>
             <span
-              className={cn(
-                "t-shimmer co-progress-copy max-w-[min(64vw,34rem)] text-[13px] leading-[18px] text-muted",
-                needsWrappedWidth ? "w-[min(64vw,34rem)]" : "w-fit",
-              )}
+              className="t-shimmer co-progress-copy mt-0.5 w-full max-w-full text-[13px] leading-[18px] text-muted"
               data-text={displayedProgress.text}
               title={displayedProgress.text}
             >

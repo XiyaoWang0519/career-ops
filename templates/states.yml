@@ -13,6 +13,12 @@ states:
     description: Offer evaluated with report, pending decision
     dashboard_group: evaluated
 
+  - id: pursuing
+    label: Pursuing
+    aliases: [shortlisted, pursue]
+    description: Candidate chose to pursue the opportunity, application not yet submitted
+    dashboard_group: pursuing
+
   - id: applied
     label: Applied
     aliases: [aplicado, enviada, aplicada, sent]

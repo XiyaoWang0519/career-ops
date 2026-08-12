@@ -12167,7 +12167,7 @@ try {
   // 55.3b below reads states.yml dynamically, so it inherits any such loss
   // instead of catching it: with `hired` removed both checks went green while
   // set-status.mjs would reject the terminal-success state as invalid.
-  const CANONICAL_STATE_IDS = ['evaluated', 'applied', 'responded', 'interview', 'offer', 'hired', 'rejected', 'discarded', 'skip'];
+  const CANONICAL_STATE_IDS = ['evaluated', 'pursuing', 'applied', 'responded', 'interview', 'offer', 'hired', 'rejected', 'discarded', 'skip'];
   const missingStates = CANONICAL_STATE_IDS.filter((s) => !new RegExp(`^  - id: ${s}$`, 'm').test(statesSrc));
   if (missingStates.length === 0) {
     pass('templates/states.yml keeps every canonical status id (new ids may be appended)');
@@ -12187,7 +12187,7 @@ try {
     { file: 'web/src/lib/format.ts', re: /CANONICAL_STATES\s*=\s*\[([\s\S]*?)\]/, upper: false, exclude: [] },
     { file: 'web/src/app/actions/registry.ts', re: /CANON_STATUS\s*=\s*\[([\s\S]*?)\]/, upper: false, exclude: [] },
     { file: 'web/src/app/actions/registry.ts', re: /TAB_VALUES\s*=\s*\[([\s\S]*?)\]/, upper: true, exclude: [] },
-    { file: 'web/src/components/pipeline-view.tsx', re: /TABS\s*=\s*\[([\s\S]*?)\]/, upper: true, exclude: [] },
+    { file: 'web/src/components/pipeline-view.tsx', re: /STATUS_TABS\s*=\s*\[([\s\S]*?)\]/, upper: true, exclude: [] },
     { file: 'web/src/app/analytics/page.tsx', re: /STAGES[^=]*=\s*\[([\s\S]*?)\];/, upper: true, exclude: ['SKIP'] },
     // 55.3b+ the degraded-path FALLBACK in the states ACL (career-ops-ui's find, #2282):
     // it promises to mirror states.yml and drifted to 8 states while the live path had 9.

@@ -86,6 +86,7 @@ const CADENCE = resolveCadenceConfig();
 const ALIASES = {
   'evaluada': 'evaluated', 'condicional': 'evaluated', 'hold': 'evaluated',
   'evaluar': 'evaluated', 'verificar': 'evaluated',
+  'shortlisted': 'pursuing', 'pursue': 'pursuing',
   'aplicado': 'applied', 'enviada': 'applied', 'aplicada': 'applied',
   'applied': 'applied', 'sent': 'applied',
   'respondido': 'responded',

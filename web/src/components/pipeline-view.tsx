@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { CompanyLogo } from "@/components/company-logo";
 import { canonStatus, scoreNum, scoreTone, statusDot } from "@/lib/format";
 import { InboxTriage } from "@/components/inbox/inbox-triage";
+import { OpportunityDecisionActions } from "@/components/opportunity-decision-actions";
 import { cn } from "@/lib/cn";
 
 // One opportunity lifecycle, expressed as a small set of meaningful groups.
@@ -17,6 +18,7 @@ const PRIMARY_TABS = ["INBOX", "REVIEW", "ACTIVE", "CLOSED", "ALL"] as const;
 const PRIMARY_LABEL: Record<(typeof PRIMARY_TABS)[number], string> = { INBOX: "Inbox", REVIEW: "Review", ACTIVE: "Active", CLOSED: "Closed", ALL: "All" };
 const STATUS_TABS = [
   "EVALUATED",
+  "PURSUING",
   "APPLIED",
   "RESPONDED",
   "INTERVIEW",
@@ -28,7 +30,7 @@ const STATUS_TABS = [
 ] as const;
 type Tab = (typeof PRIMARY_TABS)[number] | (typeof STATUS_TABS)[number];
 
-const ACTIVE_STATUSES: Tab[] = ["APPLIED", "RESPONDED", "INTERVIEW", "OFFER"];
+const ACTIVE_STATUSES: Tab[] = ["PURSUING", "APPLIED", "RESPONDED", "INTERVIEW", "OFFER"];
 const CLOSED_STATUSES: Tab[] = ["HIRED", "REJECTED", "DISCARDED", "SKIP"];
 
 function groupFor(tab: Tab): (typeof PRIMARY_TABS)[number] {
@@ -231,15 +233,22 @@ export function PipelineView({
         <ul className="mt-4 space-y-2 sm:hidden">
           {filtered.map((row, index) => (
             <li key={`${row.n}-${index}`}>
-              <Link href={`/pipeline/${row.n}`} className="flex min-h-[76px] items-center gap-3 rounded-xl border border-border bg-surface/40 px-3.5 py-3 transition-colors hover:border-brand/35">
-                <CompanyLogo name={row.company} size={28} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-foreground">{row.company}</span>
-                  <span className="mt-0.5 block truncate text-xs text-muted">{row.role}</span>
-                  <span className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-faint"><span className={cn("size-1.5 rounded-full", statusDot(row.status))} />{row.status}</span>
-                </span>
-                <Badge tone={scoreTone(row.score)}>{row.score || "—"}</Badge>
-              </Link>
+              <div className="rounded-xl border border-border bg-surface/40 px-3.5 py-3 transition-colors hover:border-brand/35">
+                <Link href={`/pipeline/${row.n}`} className="flex min-h-[52px] items-center gap-3">
+                  <CompanyLogo name={row.company} size={28} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">{row.company}</span>
+                    <span className="mt-0.5 block truncate text-xs text-muted">{row.role}</span>
+                    <span className="mt-1 inline-flex items-center gap-1.5 text-[11px] text-faint"><span className={cn("size-1.5 rounded-full", statusDot(row.status))} />{row.status}</span>
+                  </span>
+                  <Badge tone={scoreTone(row.score)}>{row.score || "—"}</Badge>
+                </Link>
+                {group === "REVIEW" && (
+                  <div className="mt-2.5 border-t border-border pt-2.5">
+                    <OpportunityDecisionActions n={row.n} score={row.score} compact />
+                  </div>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -259,6 +268,7 @@ export function PipelineView({
                     </span>
                   </th>
                 ))}
+                {group === "REVIEW" && <th className="px-4 py-2.5 text-right font-medium">Decision</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -283,6 +293,11 @@ export function PipelineView({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-faint tabular-nums">{r.date}</td>
+                  {group === "REVIEW" && (
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <OpportunityDecisionActions n={r.n} score={r.score} />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

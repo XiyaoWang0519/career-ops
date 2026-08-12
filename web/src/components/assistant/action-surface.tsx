@@ -228,7 +228,7 @@ function PipelineWidget({ path, onAction, onPrompt }: { path: string; onAction: 
   const [tab, setTab] = useState(initialTab);
   const [query, setQuery] = useState(params.get("q") || "");
   const min = Number(params.get("min") || 0);
-  const activeStatuses = new Set(["Applied", "Responded", "Interview", "Offer"]);
+  const activeStatuses = new Set(["Pursuing", "Applied", "Responded", "Interview", "Offer"]);
   const applications = pipeline.applications.filter((application) => {
     const tabMatch = tab === "ALL" || (tab === "ACTIVE" ? activeStatuses.has(application.status) : application.status.toUpperCase() === tab);
     return tabMatch && scoreNum(application.score) >= min && `${application.company} ${application.role}`.toLowerCase().includes(query.toLowerCase());
@@ -275,7 +275,7 @@ function PipelineWidget({ path, onAction, onPrompt }: { path: string; onAction: 
   );
 }
 
-const STATUS_OPTIONS = ["Evaluated", "Applied", "Responded", "Interview", "Offer", "Hired", "Rejected", "Discarded", "SKIP"];
+const STATUS_OPTIONS = ["Evaluated", "Pursuing", "Applied", "Responded", "Interview", "Offer", "Hired", "Rejected", "Discarded", "SKIP"];
 
 function ReportWidget({ n, onAction, onPrompt }: { n: string; onAction: WidgetAction; onPrompt: (prompt: string) => void }) {
   const { applications } = usePipeline();
@@ -447,7 +447,7 @@ function SettingsWidget({ onPrompt }: { onPrompt: (prompt: string) => void }) {
 function TodayWidget({ onAction, onPrompt }: { onAction: WidgetAction; onPrompt: (prompt: string) => void }) {
   const { inbox, applications } = usePipeline();
   const pending = inbox.filter((item) => !item.done).length;
-  const active = applications.filter((item) => ["Applied", "Responded", "Interview", "Offer"].includes(item.status)).length;
+  const active = applications.filter((item) => ["Pursuing", "Applied", "Responded", "Interview", "Offer"].includes(item.status)).length;
   return (
     <WidgetShell icon={Sparkles} title="Today’s search command center" footer={<><span className="flex items-center gap-2 text-[11px] text-muted"><Signal level={pending || active ? 3 : 1} /> Live priorities</span><PrimaryButton onClick={() => onPrompt("Give me the three highest-leverage actions for my job search today.")}>Plan my day</PrimaryButton></>}>
       <div className="space-y-1.5">
