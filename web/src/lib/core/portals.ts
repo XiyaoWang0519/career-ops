@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import yaml from "js-yaml";
 import { careerOpsRoot } from "@/lib/career-ops";
 import { DEFAULT_FILTERS, cleanChips, type ExploreFilters } from "@/lib/explore";
+import { expandLocationTargets, reconcileNegativeRoles } from "@/lib/target-filters.mjs";
 
 /**
  * ACL for portals.yml — the core's scan-filter config (a CONTRACT entry-point,
@@ -40,6 +41,9 @@ export function serializePortals(f: FilterLists): string {
   }
   if (f.allow.length || f.block.length || f.alwaysAllow.length) {
     out += "location_filter:\n";
+    // Explorer labels this field "Only in". A remote marker in a title must not
+    // silently admit a posting whose actual location is outside that list.
+    if (f.allow.length) out += "  allow_remote_title: false\n";
     out += block("always_allow", f.alwaysAllow);
     out += block("allow", f.allow);
     out += block("block", f.block);
@@ -86,8 +90,8 @@ export function seedExploreFilters(): { filters: ExploreFilters; seededFrom: str
     const tf = (portals.title_filter ?? {}) as Record<string, unknown>;
     const lf = (portals.location_filter ?? {}) as Record<string, unknown>;
     filters.positive = listFrom(tf.positive);
-    filters.negative = listFrom(tf.negative);
-    filters.allow = listFrom(lf.allow);
+    filters.negative = reconcileNegativeRoles(tf.negative, filters.positive);
+    filters.allow = expandLocationTargets(lf.allow);
     filters.block = listFrom(lf.block);
     filters.alwaysAllow = listFrom(lf.always_allow);
     if (filters.positive.length || filters.allow.length || filters.block.length) seededFrom.push("portals.yml");
@@ -97,7 +101,7 @@ export function seedExploreFilters(): { filters: ExploreFilters; seededFrom: str
     const profile = loadYaml("config/profile.yml");
     const roles = (profile?.target_roles ?? {}) as Record<string, unknown>;
     const fromRoles = listFrom([
-      ...(typeof roles.primary === "string" ? [roles.primary] : []),
+      ...(typeof roles.primary === "string" ? [roles.primary] : Array.isArray(roles.primary) ? roles.primary : []),
       ...(Array.isArray(roles.archetypes) ? roles.archetypes : []),
     ]);
     if (fromRoles.length) {

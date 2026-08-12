@@ -134,7 +134,7 @@ export function FilterBuilder({
 
       <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
         <div>
-          <Label hint="postings published in this window">
+          <Label hint="dated posts in this window; active undated roles included">
             <span className="inline-flex items-center gap-1.5">
               <Clock className="size-3.5 text-muted" /> Posted within
             </span>
@@ -157,7 +157,7 @@ export function FilterBuilder({
         </div>
 
         <div>
-          <Label hint={filters.ats.length === 0 ? "pick at least one" : undefined}>Sources</Label>
+          <Label hint={filters.ats.includes("workday") ? "Workday can make scans much slower" : undefined}>Sources</Label>
           <div className="flex flex-wrap gap-1.5">
             {ATS_SOURCES.map((a) => {
               const on = filters.ats.includes(a);

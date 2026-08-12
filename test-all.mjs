@@ -5699,6 +5699,21 @@ try {
     fail('remote-title rescue must not override the block tier');
   }
 
+  // Case 25b: callers that promise strict "Only in" semantics can opt out of
+  // the remote-title rescue without changing the historical default.
+  const strictLocationFilter = buildLocationFilter({
+    allow: ['toronto', 'ontario'],
+    allow_remote_title: false,
+  });
+  if (
+    strictLocationFilter('Toronto, Ontario', undefined, 'ML Engineer - Remote') === true &&
+    strictLocationFilter('Phoenix, Arizona', undefined, 'ML Engineer - Remote') === false
+  ) {
+    pass('strict location mode prevents remote titles from bypassing "Only in"');
+  } else {
+    fail('strict location mode should enforce the configured allow list');
+  }
+
   // Case 26: only a work-arrangement marker counts. "Remote Sensing" is a GIS
   // domain compound — Esri, a tracked company, posts on-site roles with exactly
   // that phrase, so a bare /remote/ test would silently admit them.

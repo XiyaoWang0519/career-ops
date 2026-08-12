@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { careerOpsRoot, rootScript } from "@/lib/career-ops";
 import { writeTempPortals, cleanupTempPortals } from "./portals";
 import { ATS_SOURCES, type DiscoveredOffer, type ExploreFilters, type ScanEvent } from "@/lib/explore";
+import { normalizeScanFunnel, parseScannerOfferLine, parseScannerProgressLine } from "@/lib/scan-progress.mjs";
 
 export type { DiscoveredOffer, ScanEvent, AtsSource } from "@/lib/explore";
 export { ATS_SOURCES } from "@/lib/explore";
@@ -76,6 +77,14 @@ type ScanJson = {
   datasetStatus?: Record<string, "ok" | "stale" | "empty">;
   postingsKept?: number;
   postingsDroppedNoDate?: number;
+  postingsChecked?: number;
+  postingsDroppedInvalid?: number;
+  postingsDroppedStale?: number;
+  postingsDroppedTitle?: number;
+  postingsDroppedLocation?: number;
+  postingsDroppedContent?: number;
+  postingsDroppedSeen?: number;
+  postingsFilteredBlacklist?: number;
   unreachableBoards?: number;
   offers?: JsonOffer[];
 };
@@ -94,12 +103,19 @@ export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) =>
       ats.join(","),
       "--limit",
       String(Math.max(1, filters.limitPerAts || 150)),
+      // These are live listings returned by the ATS itself. Many ATS APIs omit a
+      // publish date, so dropping undated rows makes a healthy search look empty.
+      // Keep them and label their date honestly in the UI.
+      "--include-undated",
+      // A capped non-shuffled reverse scan only visits the alphabetic beginning
+      // of each ATS directory on every run. Sample across the directory instead.
+      "--shuffle",
     ];
     if (useJson) args.push("--json");
 
     const child = spawn(process.execPath, args, {
       cwd: careerOpsRoot(),
-      env: { ...process.env, CAREER_OPS_PORTALS: tempPortals },
+      env: { ...process.env, CAREER_OPS_PORTALS: tempPortals, CAREER_OPS_WEB_PROGRESS: "1" },
     });
 
     const offers: DiscoveredOffer[] = [];
@@ -111,8 +127,10 @@ export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) =>
     let outBuf = "";
     let errBuf = "";
     let jsonOut = ""; // --json mode: the single stdout object accumulates here
+    let timedOut = false;
 
     const killer = setTimeout(() => {
+      timedOut = true;
       try {
         child.kill("SIGTERM");
       } catch {
@@ -205,10 +223,35 @@ export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) =>
     });
     child.stderr.on("data", (d: Buffer) => {
       errBuf += d.toString();
-      const parts = errBuf.split(/\r?\n/);
+      // scan-ats-full uses carriage returns for an in-place CLI progress line.
+      // Treat them as event boundaries here so the browser receives every
+      // company-count update instead of one combined line at source completion.
+      const parts = errBuf.split(/\r\n|\r|\n/);
       errBuf = parts.pop() ?? "";
       for (const p of parts) {
         if (!p.trim()) continue;
+        const streamedOffer = parseScannerOfferLine(p);
+        if (streamedOffer) {
+          const url = streamedOffer.url;
+          if (!seen.has(url)) {
+            seen.add(url);
+            const source = streamedOffer.source || `${currentAts}-full`;
+            const offer: DiscoveredOffer = {
+              ...streamedOffer,
+              ats: source.replace(/-full$/, ""),
+              source,
+              matchedKeyword: firstMatch(streamedOffer.title, filters.positive),
+            };
+            offers.push(offer);
+            onEvent({ kind: "offer", offer });
+          }
+          continue;
+        }
+        const live = parseScannerProgressLine(p);
+        if (live) {
+          onEvent({ kind: "progress", ...live });
+          continue;
+        }
         if (useJson) handleProgressLine(p); // human progress lives on stderr in --json mode
         onEvent({ kind: "log", line: p.trim() });
       }
@@ -258,11 +301,27 @@ export function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEvent) =>
             capHit: j.capHit,
             datasetStatus: j.datasetStatus,
             postingsDroppedNoDate: j.postingsDroppedNoDate,
+            funnel: normalizeScanFunnel({
+              postingsChecked: j.postingsChecked,
+              filteredTitle: j.postingsDroppedTitle,
+              filteredLocation: j.postingsDroppedLocation,
+              filteredDate: (j.postingsDroppedStale ?? 0) + (j.postingsDroppedNoDate ?? 0),
+              filteredContent: j.postingsDroppedContent,
+              filteredSeen: j.postingsDroppedSeen,
+              filteredInvalid: j.postingsDroppedInvalid,
+              filteredBlacklist: j.postingsFilteredBlacklist,
+              selected: j.postingsKept ?? offers.length,
+            }),
           });
         } else {
           // --json requested but stdout didn't parse — surface honestly rather than
           // silently returning 0 (defensive; shouldn't happen once the probe passed).
-          onEvent({ kind: "error", message: "The scanner returned no readable output." });
+          onEvent({
+            kind: "error",
+            message: timedOut
+              ? "The scan reached its source time limit. Showing every match found before it stopped."
+              : "The scanner returned no readable terminal output.",
+          });
         }
         resolve(offers);
         return;

@@ -132,6 +132,7 @@ export default function ChatPage() {
     send,
     resetChat,
     resolveConfirm,
+    runAction,
     jobs,
   } = useAssistant();
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -281,7 +282,7 @@ export default function ChatPage() {
                         ) : (
                           <div className="space-y-3">
                             {message.parts.map((part, partIndex) => (
-                              <PartView key={partIndex} part={part} jobs={jobs} onConfirm={resolveConfirm} />
+                              <PartView key={partIndex} part={part} jobs={jobs} onConfirm={resolveConfirm} onAction={runAction} onPrompt={send} />
                             ))}
                           </div>
                         )}

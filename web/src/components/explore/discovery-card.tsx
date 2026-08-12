@@ -55,7 +55,7 @@ export function DiscoveryCard({ offer, inPipeline, evaluatedN }: { offer: Discov
   const isAdded = added.has(offer.url) || inPipeline || working || doneEval;
   const isAdding = adding.has(offer.url);
   const unverified = offer.verification === "unconfirmed";
-  const fresh = freshness(offer.postedAt) || offer.postedHint || "";
+  const fresh = freshness(offer.postedAt) || offer.postedHint || (unverified ? "" : "date not listed");
 
   const evaluate = () => {
     addToPipeline([offer]); // evaluating implies it's in the pipeline — record it

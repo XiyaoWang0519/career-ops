@@ -3,14 +3,16 @@ import path from "node:path";
 import yaml from "js-yaml";
 import { careerOpsRoot } from "@/lib/career-ops";
 import { atomicWriteWithBackup } from "@/lib/core/safe-write";
+import { expandLocationTargets, reconcileNegativeRoles } from "@/lib/target-filters.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Merge-safe writer for portals.yml's title_filter (a USER-LAYER file). Replaces
-// ONLY title_filter.positive (the role keywords the free scanner matches), seeding
+// title_filter.positive (the role keywords the free scanner matches), seeding
 // from templates/portals.example.yml on first create, and PRESERVING tracked_companies
-// + every other block. Atomic write, confirm-gated (setProfile/setPortals). This is
+// + every compatible block. Contradictory early-career exclusions are removed when
+// the user targets internships/co-ops. Atomic write, confirm-gated (setProfile/setPortals). This is
 // what loads the very first home scan once the user confirms their target roles.
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -41,11 +43,12 @@ export async function POST(req: Request) {
   }
 
   const tf = isObj(doc.title_filter) ? { ...doc.title_filter } : {};
-  tf.positive = roles; // replace ONLY the positive keywords; keep negative/etc.
+  tf.positive = roles;
+  tf.negative = reconcileNegativeRoles(tf.negative, roles);
   doc.title_filter = tf;
   if (Array.isArray(body.location) && body.location.length) {
     const lf = isObj(doc.location_filter) ? { ...doc.location_filter } : {};
-    lf.allow = body.location.map((l) => String(l).trim()).filter(Boolean);
+    lf.allow = expandLocationTargets(body.location);
     doc.location_filter = lf;
   }
 

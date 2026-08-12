@@ -24,6 +24,7 @@ import { ThinkingOrb } from "thinking-orbs";
 import { stripLegacyCodexDiagnostics } from "@/lib/codex-stream.mjs";
 import { explicitApplyUrl } from "@/lib/apply-intent.mjs";
 import { ThinkingStatus, type AssistantProgress } from "@/components/assistant/thinking-status";
+import { AssistantActionWidget } from "@/components/assistant/action-surface";
 import {
   assistantProgressForReasoning,
   assistantProgressForTool,
@@ -37,7 +38,8 @@ export type Part =
   | { type: "card"; jobId: string }
   | { type: "browser"; sessionId: string; url?: string }
   | { type: "batch"; batchId: string; jobIds: string[] }
-  | { type: "confirm"; cid: string; summary: string; state: "pending" | "done" | "cancelled" };
+  | { type: "surface"; path: string }
+  | { type: "confirm"; cid: string; summary: string; state: "pending" | "done" | "cancelled" | "failed" };
 export type Msg = { role: "user" | "assistant"; parts: Part[] };
 type LegacyTracePart = { type: "trace"; items?: unknown[] };
 
@@ -294,6 +296,7 @@ type AssistantContextValue = {
   openDock: () => void;
   closeDock: () => void;
   resolveConfirm: (cid: string, accept: boolean) => void;
+  runAction: (id: string, args: Record<string, unknown>) => void;
   jobs: ReturnType<typeof useJobs>["jobs"];
 };
 
@@ -334,7 +337,11 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
   const exploreRef = useRef(explore);
   exploreRef.current = explore;
   const handledRef = useRef<Set<string>>(new Set());
-  const confirmRuns = useRef<Map<string, () => DoneInfo>>(new Map());
+  const confirmRuns = useRef<Map<string, { run: () => DoneInfo | Promise<DoneInfo>; summary: string }>>(new Map());
+  const pendingConfirmFollowupsRef = useRef<string[]>([]);
+  const sendRef = useRef<(m?: string) => void>(() => {});
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const historyHydratedRef = useRef(false);
 
   // selected AI tool from Config, or server-pinned default
@@ -494,19 +501,24 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     setMessages((ms) => patchLastAssistant(ms, (m) => ({ ...m, parts: [...m.parts, ...newParts] })));
 
   function appendCards(info: DoneInfo) {
+    const parts: Part[] = [];
+    if (info.note) parts.push({ type: "note", text: info.note });
+    if (info.surface) parts.push({ type: "surface", path: info.surface });
     const ids = info.jobIds ?? [];
     if (!ids.length) {
-      if (info.note) appendParts([{ type: "note", text: info.note }]);
+      if (parts.length) appendParts(parts);
       return;
     }
-    if (info.batchId && ids.length > 1) appendParts([{ type: "batch", batchId: info.batchId, jobIds: ids }]);
-    else appendParts(ids.map((jobId) => ({ type: "card" as const, jobId })));
+    if (info.batchId && ids.length > 1) parts.push({ type: "batch", batchId: info.batchId, jobIds: ids });
+    else parts.push(...ids.map((jobId) => ({ type: "card" as const, jobId })));
+    appendParts(parts);
   }
 
   function buildCtx(): ActionCtx {
     return {
       push: (p) => router.push(p),
       replace: (p) => router.replace(p),
+      inlineNavigation: pathname === "/chat",
       startJob,
       inbox: pipelineRef.current.inbox,
       applications: pipelineRef.current.applications,
@@ -521,17 +533,15 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({ fact }),
         }).catch(() => {});
       },
-      writeStatus: (n, status) => {
-        fetch("/api/status", {
+      writeStatus: async (n, status) => {
+        const response = await fetch("/api/status", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ n, status }),
-        })
-          .then(() => {
-            router.refresh();
-            pipelineRef.current.refetch();
-          })
-          .catch(() => {});
+        });
+        if (!response.ok) throw new Error("Status update failed");
+        router.refresh();
+        pipelineRef.current.refetch();
       },
       setApplyField: (idOrLabel, value) => applyRef.current.setAnswer(idOrLabel, value),
       startApply: (u) => {
@@ -542,13 +552,14 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
         });
       },
       applyExplore: (patch, opts) => exploreRef.current.applyPatch(patch, opts),
-      writeProfile: (patch) => {
-        fetch("/api/profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) })
-          .then(() => router.refresh())
-          .catch(() => {});
+      writeProfile: async (patch) => {
+        const response = await fetch("/api/profile", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+        if (!response.ok) throw new Error("Profile save failed");
+        router.refresh();
       },
-      writePortals: (roles, location) => {
-        fetch("/api/portals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles, location }) }).catch(() => {});
+      writePortals: async (roles, location) => {
+        const response = await fetch("/api/portals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ roles, location }) });
+        if (!response.ok) throw new Error("Scan target save failed");
       },
     };
   }
@@ -560,28 +571,60 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
       if (res.note) appendParts([{ type: "note", text: res.note }]);
     } else if (res.status === "confirm") {
       const cid = `c-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
-      confirmRuns.current.set(cid, res.run);
+      confirmRuns.current.set(cid, { run: res.run, summary: res.summary });
       appendParts([{ type: "confirm", cid, summary: res.summary, state: "pending" }]);
     }
   }
 
-  function resolveConfirm(cid: string, accept: boolean) {
-    const run = confirmRuns.current.get(cid);
+  async function resolveConfirm(cid: string, accept: boolean) {
+    const pending = confirmRuns.current.get(cid);
     confirmRuns.current.delete(cid);
-    const info = accept && run ? run() : null;
     setMessages((ms) =>
       ms.map((m) => {
         if (!m.parts.some((p) => p.type === "confirm" && p.cid === cid)) return m;
         const parts: Part[] = m.parts.map((p) =>
           p.type === "confirm" && p.cid === cid ? { ...p, state: accept ? "done" : "cancelled" } : p,
         );
-        if (info?.jobIds?.length) {
-          if (info.batchId && info.jobIds.length > 1) parts.push({ type: "batch", batchId: info.batchId, jobIds: info.jobIds });
-          else parts.push(...info.jobIds.map((jobId) => ({ type: "card" as const, jobId })));
-        }
         return { ...m, parts };
       }),
     );
+    if (!accept || !pending) return;
+
+    let followup: string;
+    try {
+      const info = await pending.run();
+      setMessages((ms) =>
+        ms.map((m) => {
+          if (!m.parts.some((p) => p.type === "confirm" && p.cid === cid)) return m;
+          const parts = [...m.parts];
+          if (info.jobIds?.length) {
+            if (info.batchId && info.jobIds.length > 1) parts.push({ type: "batch" as const, batchId: info.batchId, jobIds: info.jobIds });
+            else parts.push(...info.jobIds.map((jobId) => ({ type: "card" as const, jobId })));
+          } else if (info.note) {
+            parts.push({ type: "note", text: info.note });
+          }
+          return { ...m, parts };
+        }),
+      );
+      followup = `I confirmed: “${pending.summary}”. The confirmed action completed successfully. Continue from here.`;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "the action failed";
+      setMessages((ms) =>
+        ms.map((m) => ({
+          ...m,
+          parts: m.parts.map((p) =>
+            p.type === "confirm" && p.cid === cid ? { ...p, state: "failed" as const } : p,
+          ),
+        })),
+      );
+      followup = `I clicked Confirm for “${pending.summary}”, but it failed: ${detail}. Help me recover.`;
+    }
+
+    pendingConfirmFollowupsRef.current.push(followup);
+    if (!busyRef.current) {
+      const next = pendingConfirmFollowupsRef.current.shift();
+      if (next) window.setTimeout(() => sendRef.current(next), 0);
+    }
   }
 
   // compact pipeline snapshot for the model (counts + per-company pending — lets
@@ -826,9 +869,16 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     setMessages([]);
   }
 
+  useEffect(() => {
+    if (busy || pendingConfirmFollowupsRef.current.length === 0) return;
+    const next = pendingConfirmFollowupsRef.current.shift();
+    if (!next) return;
+    const timer = window.setTimeout(() => sendRef.current(next), 0);
+    return () => window.clearTimeout(timer);
+  }, [busy]);
+
   // Other surfaces (e.g. the onboarding banner) can open the assistant and kick
   // off a turn via a window event.
-  const sendRef = useRef<(m?: string) => void>(() => {});
   sendRef.current = send;
   useEffect(() => {
     function onOpen(e: Event) {
@@ -909,6 +959,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
     openDock: () => setOpen(true),
     closeDock: () => setOpen(false),
     resolveConfirm,
+    runAction: runDispatch,
     jobs,
   };
 
@@ -956,7 +1007,7 @@ export function AssistantProvider({ children }: { children: React.ReactNode }) {
                     ) : (
                       <div className="space-y-2">
                         {m.parts.map((p, j) => (
-                          <PartView key={j} part={p} jobs={jobs} onConfirm={resolveConfirm} onOpen={() => {}} />
+                          <PartView key={j} part={p} jobs={jobs} onConfirm={resolveConfirm} onAction={runDispatch} onPrompt={send} onOpen={() => {}} />
                         ))}
                       </div>
                     )}
@@ -1030,10 +1081,14 @@ export function PartView({
   part,
   jobs,
   onConfirm,
+  onAction = () => {},
+  onPrompt = () => {},
 }: {
   part: Part;
   jobs: ReturnType<typeof useJobs>["jobs"];
   onConfirm: (cid: string, accept: boolean) => void;
+  onAction?: (id: string, args: Record<string, unknown>) => void;
+  onPrompt?: (prompt: string) => void;
   onOpen?: () => void;
 }) {
   if (part.type === "text") {
@@ -1069,6 +1124,9 @@ export function PartView({
   }
   if (part.type === "browser") {
     return <BrowserSessionCard sessionId={part.sessionId} url={part.url} />;
+  }
+  if (part.type === "surface") {
+    return <AssistantActionWidget path={part.path} onAction={onAction} onPrompt={onPrompt} />;
   }
   if (part.type === "batch") {
     const children = part.jobIds.map((id) => jobs.find((j) => j.id === id)).filter(Boolean);
@@ -1119,7 +1177,9 @@ export function PartView({
             </button>
           </div>
         ) : (
-          <div className="mt-1 text-xs text-faint">{part.state === "done" ? "✓ started" : "cancelled"}</div>
+          <div className="mt-1 text-xs text-faint">
+            {part.state === "done" ? "✓ confirmed" : part.state === "failed" ? "couldn’t complete" : "cancelled"}
+          </div>
         )}
       </div>
     );

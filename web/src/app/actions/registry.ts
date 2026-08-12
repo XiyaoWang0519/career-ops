@@ -34,17 +34,18 @@ export type StartJobInput = {
 export type ActionCtx = {
   push: (path: string) => void; // router.push — section/detail change
   replace: (path: string) => void; // router.replace — incremental filter tweak
+  inlineNavigation?: boolean; // /chat keeps action destinations inside the conversation
   startJob: (opts: StartJobInput) => string | null;
   inbox: InboxJob[];
   applications: Application[]; // tracker snapshot — resolve #n → company/role for confirms
   jobForUrl: (url: string) => Job | undefined; // skip-if-done / retry logic
   rememberFact: (fact: string) => void;
-  writeStatus: (n: string, status: string) => void; // UPDATE-only writeback via /api/status
+  writeStatus: (n: string, status: string) => void | Promise<void>; // UPDATE-only writeback via /api/status
   setApplyField: (idOrLabel: string, value: string) => void; // edit an apply-proxy answer
   startApply: (url: string) => void; // open the apply form-proxy for a posting URL
   applyExplore?: (patch: Record<string, unknown>, opts?: { merge?: boolean; run?: boolean }) => void; // build a FREE discovery search
-  writeProfile?: (patch: Record<string, unknown>) => void; // merge-safe config/profile.yml write
-  writePortals?: (roles: string[], location?: string[]) => void; // merge-safe portals.yml title_filter write
+  writeProfile?: (patch: Record<string, unknown>) => void | Promise<void>; // merge-safe config/profile.yml write
+  writePortals?: (roles: string[], location?: string[]) => void | Promise<void>; // merge-safe portals.yml title_filter write
 };
 
 export type ProfilePatch = {
@@ -76,11 +77,11 @@ function coerceProfile(raw: Record<string, unknown>): ProfilePatch {
   return out;
 }
 
-export type DoneInfo = { jobIds?: string[]; batchId?: string; note?: string };
+export type DoneInfo = { jobIds?: string[]; batchId?: string; note?: string; surface?: string };
 export type DispatchResult =
   | ({ status: "done" } & DoneInfo)
   | { status: "ignored"; note?: string }
-  | { status: "confirm"; summary: string; run: () => DoneInfo };
+  | { status: "confirm"; summary: string; run: () => DoneInfo | Promise<DoneInfo> };
 
 // ── helpers ──────────────────────────────────────────────────────────────
 const isStr = (v: unknown): v is string => typeof v === "string" && v.length > 0;
@@ -100,6 +101,30 @@ function genBatchId(): string {
   return `batch-${Date.now()}-${Math.floor(Math.random() * 1e4)}`;
 }
 
+function exploreSurfacePath(raw: Record<string, unknown>, run: boolean): string {
+  const sp = new URLSearchParams();
+  const lists: Array<[string, string]> = [
+    ["positive", "q"],
+    ["negative", "not"],
+    ["allow", "loc"],
+    ["block", "noloc"],
+    ["alwaysAllow", "home"],
+    ["ats", "ats"],
+  ];
+  for (const [key, param] of lists) {
+    if (!Array.isArray(raw[key])) continue;
+    const values = raw[key].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    if (values.length) sp.set(param, values.join(","));
+  }
+  const since = raw.sinceDays ?? raw.since;
+  if (since !== undefined && Number.isFinite(Number(since))) sp.set("since", String(since));
+  const limit = raw.limitPerAts ?? raw.limit;
+  if (limit !== undefined && Number.isFinite(Number(limit))) sp.set("limit", String(limit));
+  if (run) sp.set("run", "1");
+  const qs = sp.toString();
+  return `/explore${qs ? `?${qs}` : ""}`;
+}
+
 // ── actions ──────────────────────────────────────────────────────────────
 type ActionDef = {
   sideEffect: "none" | "spend" | "write";
@@ -113,6 +138,10 @@ const ACTIONS: Record<string, ActionDef> = {
     run: (raw, ctx) => {
       const path = raw.path;
       if (!isStr(path) || !isAllowedPath(path)) return { status: "ignored", note: "blocked navigation" };
+      if (ctx.inlineNavigation) {
+        if (path.split(/[?#]/)[0] === "/chat") return { status: "done", note: "You’re already in the Assistant." };
+        return { status: "done", surface: path };
+      }
       ctx.push(path);
       return { status: "done" };
     },
@@ -134,7 +163,9 @@ const ACTIONS: Record<string, ActionDef> = {
       const dir = Number(raw.dir);
       if (dir === 1 || dir === -1) sp.set("dir", String(dir));
       const qs = sp.toString();
-      ctx.replace(`/pipeline${qs ? `?${qs}` : ""}`);
+      const path = `/pipeline${qs ? `?${qs}` : ""}`;
+      if (ctx.inlineNavigation) return { status: "done", surface: path };
+      ctx.replace(path);
       return { status: "done" };
     },
   },
@@ -221,8 +252,19 @@ const ACTIONS: Record<string, ActionDef> = {
       if (!ctx.applyExplore) return { status: "ignored", note: "explore unavailable here" };
       const run = raw.run === true;
       const merge = raw.merge === true;
-      ctx.push("/explore");
+      if (ctx.inlineNavigation) {
+        // The Assistant owns a native Explore widget backed by the same provider
+        // as the full page. Seed/run that shared state, then render the compact
+        // controls and live results in the conversation.
+        ctx.applyExplore(raw, { merge, run });
+        return {
+          status: "done",
+          surface: exploreSurfacePath(raw, run),
+          note: run ? "Scanning the ATS network for fresh roles (free)…" : undefined,
+        };
+      }
       ctx.applyExplore(raw, { merge, run });
+      ctx.push("/explore");
       return { status: "done", note: run ? "Scanning the ATS network for fresh roles (free)…" : "Opened Explore with your filters." };
     },
   },
@@ -265,8 +307,8 @@ const ACTIONS: Record<string, ActionDef> = {
       return {
         status: "confirm",
         summary: `Mark ${label} → ${canon}?`,
-        run: () => {
-          ctx.writeStatus(n, canon);
+        run: async () => {
+          await ctx.writeStatus(n, canon);
           return { note: `Marked #${n} as ${canon}.` };
         },
       };
@@ -318,9 +360,9 @@ const ACTIONS: Record<string, ActionDef> = {
       return {
         status: "confirm",
         summary: `Save your profile?${bits ? ` (${bits})` : ""}`,
-        run: () => {
-          ctx.writeProfile!(p as Record<string, unknown>);
-          if (p.roles?.length) ctx.writePortals?.(p.roles, p.location ? [p.location] : undefined);
+        run: async () => {
+          await ctx.writeProfile!(p as Record<string, unknown>);
+          if (p.roles?.length) await ctx.writePortals?.(p.roles, p.location ? [p.location] : undefined);
           return { note: "Profile saved — your matches will sharpen." };
         },
       };
@@ -337,8 +379,8 @@ const ACTIONS: Record<string, ActionDef> = {
       return {
         status: "confirm",
         summary: `Set your scan targets to: ${roles.join(", ")}?`,
-        run: () => {
-          ctx.writePortals!(roles, location);
+        run: async () => {
+          await ctx.writePortals!(roles, location);
           return { note: "Scan targets updated." };
         },
       };

@@ -33,8 +33,13 @@ export const DEFAULT_FILTERS: ExploreFilters = {
   allow: [],
   block: [],
   alwaysAllow: [],
-  sinceDays: 7,
-  ats: [...ATS_SOURCES],
+  // Niche early-career searches often have no seven-day hits. Thirty days is
+  // still recent while avoiding a misleading empty first run.
+  sinceDays: 30,
+  // Workday tenants can expose thousands of rows each and routinely dominate
+  // the entire request budget. Keep it available in the UI, but make the three
+  // fast public APIs the responsive default.
+  ats: ["greenhouse", "lever", "ashby"],
   limitPerAts: 150,
 };
 
@@ -68,12 +73,26 @@ export type DiscoveredOffer = {
 /** The two discovery surfaces: free deterministic Scan vs token-spending AI search. */
 export type ExploreMode = "scan" | "ai";
 
+/** Live first-rejection funnel from the deterministic ATS scanner. Counts are
+ * mutually exclusive, so "filtered" is the sum of the filtered* fields. */
+export type ScanFunnel = {
+  postingsChecked: number;
+  filteredTitle: number;
+  filteredLocation: number;
+  filteredDate: number;
+  filteredContent: number;
+  filteredSeen: number;
+  filteredInvalid: number;
+  filteredBlacklist: number;
+  selected: number;
+};
+
 /** Stream event grammar (NDJSON). `kind` discriminates. Discovery is FREE — the
  *  terminal `done` always carries cost {tokens:0, usd:0}. */
 export type ScanEvent =
   | { kind: "start"; ats: string[]; sinceDays: number; limit: number; free: true }
   | { kind: "atsStart"; ats: string; companies: number }
-  | { kind: "progress"; ats: string; scanned: number; total: number; matches: number }
+  | { kind: "progress"; ats: string; scanned: number; total: number; matches: number; funnel?: ScanFunnel }
   | { kind: "atsDone"; ats: string; unreachable: number }
   | { kind: "offer"; offer: DiscoveredOffer }
   | {
@@ -87,6 +106,7 @@ export type ScanEvent =
       capHit?: boolean;
       datasetStatus?: Record<string, "ok" | "stale" | "empty">;
       postingsDroppedNoDate?: number;
+      funnel?: ScanFunnel;
     }
   | { kind: "log"; line: string }
   | { kind: "error"; message: string }
@@ -151,7 +171,7 @@ export function filtersToParams(f: ExploreFilters): string {
   if (f.block.length) sp.set("noloc", f.block.join(","));
   if (f.alwaysAllow.length) sp.set("home", f.alwaysAllow.join(","));
   if (f.sinceDays !== DEFAULT_FILTERS.sinceDays) sp.set("since", String(f.sinceDays));
-  if (f.ats.length !== ATS_SOURCES.length) sp.set("ats", f.ats.join(","));
+  if (f.ats.join(",") !== DEFAULT_FILTERS.ats.join(",")) sp.set("ats", f.ats.join(","));
   if (f.limitPerAts !== DEFAULT_FILTERS.limitPerAts) sp.set("limit", String(f.limitPerAts));
   return sp.toString();
 }

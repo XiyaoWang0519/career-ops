@@ -88,7 +88,10 @@ export function ExplorerView({
       initFilters(seed.filters);
       void loadFresh();
     } else {
-      initFilters(sp.toString() ? paramsToFilters(sp) : seed.filters);
+      // URL action params are patches over the server seed. This matters for the
+      // Assistant's inline workspace: `?run=1` should keep the user's saved role
+      // targets instead of silently resetting to an unfiltered scan.
+      initFilters(sp.toString() ? paramsToFilters(sp, seed.filters) : seed.filters);
       // Onboarding hand-off: ?run=1 auto-fires the free scan + flags the first-run
       // banner (the "matches found from your CV, free" reveal).
       if (sp.get("run") === "1") {
@@ -353,7 +356,7 @@ function CappedBanner({ companiesScanned, companiesAvailable, onRefine }: { comp
 function FailedCard({ msg, onRetry }: { msg: string; onRetry: () => void }) {
   // The scanner-missing 400 (data-only / pre-scan-ats-full checkout) must NOT
   // offer a "Try again" that re-fails forever — give a real next step instead.
-  const scannerMissing = /isn'?t available|data only|complete career-ops checkout|scanner/i.test(msg);
+  const scannerMissing = /discovery scanner isn'?t available in this checkout|data[- ]only checkout|complete career-ops checkout/i.test(msg);
   if (scannerMissing) {
     return (
       <div className="rounded-2xl border border-border bg-surface/30 px-6 py-10 text-center">

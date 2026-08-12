@@ -13,9 +13,11 @@ import {
   type DiscoveredOffer,
   type ExploreFilters,
   type ExploreMode,
+  type ScanFunnel,
   type ScanEvent,
 } from "@/lib/explore";
 import { makeAiStreamParser, type AiTraceChunk, type ExploreAiWireEvent } from "@/lib/explore-ai";
+import { EMPTY_SCAN_FUNNEL, normalizeScanFunnel } from "@/lib/scan-progress.mjs";
 
 export type Phase =
   | "idle"
@@ -50,6 +52,7 @@ type ExploreCtx = {
   offers: DiscoveredOffer[];
   sources: Partial<Record<AtsSource, SourceState>>;
   matchCount: number;
+  scanFunnel: ScanFunnel;
   companiesScanned: number;
   companiesAvailable: number;
   capHit: boolean;
@@ -93,6 +96,7 @@ type ResultSnapshot = {
   phase: Phase;
   offers: DiscoveredOffer[];
   matchCount: number;
+  scanFunnel: ScanFunnel;
   companiesScanned: number;
   companiesAvailable: number;
   capHit: boolean;
@@ -115,6 +119,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
   const [offers, setOffers] = useState<DiscoveredOffer[]>([]);
   const [sources, setSources] = useState<Partial<Record<AtsSource, SourceState>>>({});
   const [matchCount, setMatchCount] = useState(0);
+  const [scanFunnel, setScanFunnel] = useState<ScanFunnel>({ ...EMPTY_SCAN_FUNNEL });
   const [companiesScanned, setCompaniesScanned] = useState(0);
   // Authoritative scan-health signals (scanner --json mode, #1199): tell a capped /
   // degraded scan from a genuinely empty one, and power a "scanned X of Y" banner.
@@ -154,6 +159,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setPhase("casting");
     setOffers([]);
     setMatchCount(0);
+    setScanFunnel({ ...EMPTY_SCAN_FUNNEL });
     setCompaniesScanned(0);
     setCompaniesAvailable(0);
     setCapHit(false);
@@ -170,6 +176,14 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     }
 
     const acc: DiscoveredOffer[] = [];
+    const acceptedUrls = new Set<string>();
+    const acceptOffer = (offer: DiscoveredOffer) => {
+      const key = offer.url.trim();
+      if (!key || acceptedUrls.has(key)) return;
+      acceptedUrls.add(key);
+      acc.push(offer);
+      setOffers([...acc]);
+    };
     let sawError = "";
     let companiesScannedAcc = 0; // 0 at the end = the directories never downloaded → degraded, not empty
     let capHitAcc = false; // scan was capped (only a slice of the universe searched)
@@ -215,14 +229,21 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
                 // `matches` is the GLOBAL running total (the engine batches the
                 // offer list to the very end), so it drives the live hero counter.
                 setMatchCount((m) => Math.max(m, ev.matches));
+                if (ev.funnel) setScanFunnel(normalizeScanFunnel(ev.funnel));
                 setSources((s) => ({ ...s, [ev.ats]: { ...s[ev.ats as AtsSource], state: "active", done: ev.scanned, total: ev.total } }));
                 break;
               case "atsDone":
                 setSources((s) => ({ ...s, [ev.ats]: { ...s[ev.ats as AtsSource], state: ev.unreachable > 0 ? "noisy" : "swept", unreachable: ev.unreachable } }));
                 break;
               case "offer":
-                acc.push(ev.offer);
-                setOffers((o) => [...o, ev.offer]);
+                acceptOffer(ev.offer);
+                break;
+              case "done":
+                // The terminal event is authoritative and also acts as a
+                // recovery path if an intermediate offer event was dropped by
+                // a proxy/stream boundary. Deduping keeps the normal path clean.
+                for (const offer of ev.offers) acceptOffer(offer);
+                if (acc.length > 0) setMatchCount(acc.length);
                 break;
               case "summary": {
                 companiesScannedAcc = ev.companiesScanned;
@@ -238,11 +259,16 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
                   droppedNoDateAcc = ev.postingsDroppedNoDate;
                   setDroppedNoDate(ev.postingsDroppedNoDate);
                 }
+                if (ev.funnel) {
+                  setScanFunnel(normalizeScanFunnel(ev.funnel));
+                  setMatchCount(ev.funnel.selected);
+                }
                 if (ev.unreachable > 0 || datasetIssue) setPartial(true);
                 break;
               }
               case "error":
                 sawError = ev.message;
+                setPartial(true);
                 break;
               default:
                 break;
@@ -292,6 +318,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setStatus("Loading fresh matches…");
     setOffers([]);
     setMatchCount(0);
+    setScanFunnel({ ...EMPTY_SCAN_FUNNEL });
     setCompaniesScanned(0);
     setCompaniesAvailable(0);
     setCapHit(false);
@@ -371,6 +398,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setOffers([]);
     setSources({});
     setMatchCount(0);
+    setScanFunnel({ ...EMPTY_SCAN_FUNNEL });
     setCompaniesScanned(0);
     setStatus("");
     setPartial(false);
@@ -405,6 +433,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setPhase("casting");
     setOffers([]);
     setMatchCount(0);
+    setScanFunnel({ ...EMPTY_SCAN_FUNNEL });
     setAiTrace([]);
     setAiCost({ searches: 0, candidates: 0, fetches: 0 });
     setError("");
@@ -565,6 +594,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setModeState(snap.mode === "ai" ? "ai" : "scan");
     setOffers(snap.offers);
     setMatchCount(typeof snap.matchCount === "number" ? snap.matchCount : snap.offers.length);
+    setScanFunnel(normalizeScanFunnel(snap.scanFunnel));
     setCompaniesScanned(snap.companiesScanned ?? 0);
     setCompaniesAvailable(snap.companiesAvailable ?? 0);
     setCapHit(!!snap.capHit);
@@ -588,24 +618,24 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     if (!SETTLED.has(phase)) return;
     try {
       const snap: ResultSnapshot = {
-        v: 1, mode, phase, offers, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, sources,
+        v: 1, mode, phase, offers, matchCount, scanFunnel, companiesScanned, companiesAvailable, capHit, droppedNoDate, sources,
         partial, status, error, added: [...added], aiTrace, aiCost, aiIntent,
       };
       sessionStorage.setItem(RESULTS_KEY, JSON.stringify(snap));
     } catch {
       /* sessionStorage full/unavailable — non-fatal */
     }
-  }, [phase, mode, offers, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, sources, partial, status, error, added, aiTrace, aiCost, aiIntent]);
+  }, [phase, mode, offers, matchCount, scanFunnel, companiesScanned, companiesAvailable, capHit, droppedNoDate, sources, partial, status, error, added, aiTrace, aiCost, aiIntent]);
 
   const value = useMemo(
     () => ({
       filters, setFilters, initFilters, phase,
       running: phase === "casting" || phase === "scanning" || phase === "revealing" || phase === "hunting",
-      offers, sources, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, partial, error, added, adding,
+      offers, sources, matchCount, scanFunnel, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, partial, error, added, adding,
       discover, loadFresh, addToPipeline, applyPatch, reset,
       mode, setMode, aiIntent, setAiIntent, discoverAI, aiTrace, aiCost,
     }),
-    [filters, setFilters, initFilters, phase, offers, sources, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, partial, error, added, adding, discover, loadFresh, addToPipeline, applyPatch, reset, mode, setMode, aiIntent, discoverAI, aiTrace, aiCost],
+    [filters, setFilters, initFilters, phase, offers, sources, matchCount, scanFunnel, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, partial, error, added, adding, discover, loadFresh, addToPipeline, applyPatch, reset, mode, setMode, aiIntent, discoverAI, aiTrace, aiCost],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

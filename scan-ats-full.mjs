@@ -606,7 +606,23 @@ async function main() {
   // In --json mode, stdout is reserved for the single machine-readable result,
   // so every human-facing line goes to stderr instead.
   const log = opts.json ? (...a) => console.error(...a) : (...a) => console.log(...a);
-  const progress = (s) => { if (!opts.json) process.stdout.write(s); };
+  // JSON reserves stdout for the terminal result, so stream live progress on
+  // stderr where the web runner can consume it without corrupting the payload.
+  const progress = opts.json ? (s) => process.stderr.write(s) : (s) => process.stdout.write(s);
+  // The web process opts into a structured progress side-channel. Keeping it
+  // behind an env flag preserves the compact, human-readable CLI output while
+  // letting the browser explain the live filter funnel precisely.
+  const webProgress = process.env.CAREER_OPS_WEB_PROGRESS === '1'
+    ? (payload) => process.stderr.write(`@@career-ops-progress ${JSON.stringify(payload)}\n`)
+    : null;
+  // Matches used to exist only in the terminal --json payload. A slow Workday
+  // slice can hit the web runner's watchdog after the live counter has already
+  // increased, which left the browser with "1 match" but no card to render.
+  // Stream each selected offer on stderr as a compact machine event so the web
+  // UI can preserve useful results even when the terminal summary is cut off.
+  const webOffer = process.env.CAREER_OPS_WEB_PROGRESS === '1'
+    ? (offer) => process.stderr.write(`@@career-ops-offer ${JSON.stringify(offer)}\n`)
+    : null;
 
   if (!existsSync(PORTALS_PATH)) {
     console.error('Error: portals.yml not found. Run onboarding first — the reverse scan reuses its title_filter/location_filter.');
@@ -656,8 +672,14 @@ async function main() {
   let totalCompaniesScanned = cc.totalCompaniesScanned || 0;
   let totalCompaniesAvailable = 0;
   let totalErrors = cc.totalErrors || 0;
+  let postingsChecked = cc.postingsChecked || 0;
+  let droppedInvalid = cc.droppedInvalid || 0;
+  let droppedStale = cc.droppedStale || 0;
   let droppedNoDate = cc.droppedNoDate || 0;
+  let droppedTitle = cc.droppedTitle || 0;
+  let droppedLocation = cc.droppedLocation || 0;
   let droppedContent = cc.droppedContent || 0;
+  let droppedSeen = cc.droppedSeen || 0;
   let capHit = false;
   // Aggregated from providers/workday.mjs's jobs.workdayNoDateSkip tag — see
   // there for why this is a counter instead of a per-company console.error
@@ -673,9 +695,25 @@ async function main() {
   const datasetStatus = {};
 
   const snapshotCounters = () => ({
-    totalCompaniesScanned, totalErrors, droppedNoDate, droppedContent,
+    totalCompaniesScanned, totalErrors, postingsChecked, droppedInvalid,
+    droppedStale, droppedNoDate, droppedTitle, droppedLocation, droppedContent,
+    droppedSeen,
     noDateSkipCompanies, noDateSkipJobs, cappedBoards,
   });
+  const liveFunnel = () => {
+    const visible = filterBlacklistedOffers(newOffers, blacklist, { includeBlacklisted: opts.includeBlacklisted });
+    return {
+      postingsChecked,
+      filteredTitle: droppedTitle,
+      filteredLocation: droppedLocation,
+      filteredDate: droppedStale + droppedNoDate,
+      filteredContent: droppedContent,
+      filteredSeen: droppedSeen,
+      filteredInvalid: droppedInvalid,
+      filteredBlacklist: visible.filteredBlacklist,
+      selected: visible.offers.length,
+    };
+  };
   const checkpointBase = () => ({
     version: 1,
     cutoffMs: cutoff,
@@ -692,12 +730,13 @@ async function main() {
   // counters so both passes update the same run totals.
   const processJobs = async (jobs, sourceName, provider) => {
     for (const job of jobs) {
-      if (!job.url || !job.title) continue;
+      postingsChecked++;
+      if (!job.url || !job.title) { droppedInvalid++; continue; }
       // Confirmed-stale postings are always dropped. Undated postings are
       // dropped by default (a reverse scan targets *fresh* roles) but
       // COUNTED so callers see the gap; --include-undated keeps them, marked.
       let dateClass = classifyPostingDate(job, cutoff);
-      if (dateClass === 'stale') continue;
+      if (dateClass === 'stale') { droppedStale++; continue; }
       // Providers whose list pages carry no date (icims) get one shot at dating
       // the posting from its detail page — but only after the cheap title and
       // location filters pass, so a 10k-tenant sweep never pays a detail-page
@@ -715,18 +754,38 @@ async function main() {
         try { await provider.enrichDate(job, ctx); } catch { /* stays undated */ }
         dateClass = classifyPostingDate(job, cutoff);
       }
-      if (dateClass === 'stale') continue;
+      if (dateClass === 'stale') { droppedStale++; continue; }
       if (dateClass === 'undated' && !opts.includeUndated) { droppedNoDate++; continue; }
-      if (!titleFilter(job.title)) continue;
+      if (!titleFilter(job.title)) { droppedTitle++; continue; }
       // job.url is passed so the location filter can fall back to the URL's own
       // location segment when the provider reports a rolled-up "N Locations" string;
       // job.title so a title-stated remote role survives a city-only location.
-      if (!locationFilter(job.location, job.url, job.title)) continue;
+      if (!locationFilter(job.location, job.url, job.title)) { droppedLocation++; continue; }
       if (!contentFilter(job.description, matchedTitleKeywords(job.title, config?.title_filter))) { droppedContent++; continue; }
       const dedupUrl = normalizeUrlForDedup(job.url);
-      if (seenUrls.has(dedupUrl)) continue;
+      if (seenUrls.has(dedupUrl)) { droppedSeen++; continue; }
       seenUrls.add(dedupUrl); // intra-scan dedup
-      newOffers.push({ ...job, source: `${sourceName}-full`, dateStatus: job.postedAt ? 'dated' : 'unknown' });
+      const selectedOffer = { ...job, source: `${sourceName}-full`, dateStatus: job.postedAt ? 'dated' : 'unknown' };
+      newOffers.push(selectedOffer);
+      if (webOffer) {
+        // Apply the user-owned blacklist before telling the browser a role is
+        // selected. Otherwise the live count/card can disagree with the final
+        // authoritative result after the terminal blacklist pass.
+        const visible = filterBlacklistedOffers([selectedOffer], blacklist, { includeBlacklisted: opts.includeBlacklisted }).offers[0];
+        if (visible) {
+          webOffer({
+            company: visible.company,
+            title: visible.title,
+            url: visible.url,
+            location: visible.location || '',
+            postedAt: visible.postedAt ? new Date(visible.postedAt).toISOString().slice(0, 10) : '',
+            source: visible.source,
+            dateStatus: visible.dateStatus,
+            blacklisted: visible.blacklisted,
+            note: visible.note,
+          });
+        }
+      }
     }
   };
 
@@ -779,6 +838,11 @@ async function main() {
     // call returns to checkpoint where it actually stopped (#2283).
     let lastDone = 0;
     let lastResumeAt = 0;
+    // The web UI consumes these lines as real progress events. Emit roughly
+    // twenty updates per ATS slice so a 150-company interactive scan does not
+    // sit at 0% and then jump straight to the next source. The carriage return
+    // keeps the human CLI output on one line.
+    const progressEvery = Math.max(1, Math.ceil(entries.length / 20));
     const truncated = [];
     await parallelEach(entries, CONCURRENCY, async (entry) => {
       try {
@@ -819,8 +883,19 @@ async function main() {
     }, ({ done, resumeAt }) => {
       lastDone = done;
       lastResumeAt = resumeAt;
-      if (done % 200 === 0 || done === entries.length) {
-        progress(`  ${done}/${entries.length} scanned, ${newOffers.length} total matches\r`);
+      if (done % progressEvery === 0 || done === entries.length) {
+        if (webProgress) {
+          const funnel = liveFunnel();
+          webProgress({
+            ats: name,
+            scanned: done,
+            total: entries.length,
+            matches: funnel.selected,
+            funnel,
+          });
+        } else {
+          progress(`  ${done}/${entries.length} scanned, ${newOffers.length} total matches\r`);
+        }
       }
       if (done % CHECKPOINT_EVERY === 0 && !opts.dryRun) {
         writeCheckpoint({
@@ -1021,10 +1096,16 @@ async function main() {
       stoppedByOutage,
       datasetStatus,
       postingsKept: offers.length,
+      postingsChecked,
+      postingsDroppedInvalid: droppedInvalid,
+      postingsDroppedStale: droppedStale,
       postingsDroppedNoDate: droppedNoDate,
+      postingsDroppedTitle: droppedTitle,
+      postingsDroppedLocation: droppedLocation,
       postingsFilteredBlacklist: blacklistResult.filteredBlacklist,
       postingsAnnotatedBlacklisted: blacklistResult.annotatedBlacklisted,
       postingsDroppedContent: droppedContent,
+      postingsDroppedSeen: droppedSeen,
       unreachableBoards: totalErrors,
       cappedBoards,
       dnsPacing: { delayed: pacing.delayed, waitedMs: Math.round(pacing.waitedMs) },
