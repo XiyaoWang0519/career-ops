@@ -134,6 +134,10 @@ test("non-json and empty lines are ignored", () => {
 test("Codex stderr hides recoverable diagnostics but keeps actionable failures", () => {
   assert.equal(codexStderrSummary("WARN failed to warm featured plugin ids cache\nERROR failed to refresh models cache"), "");
   assert.equal(
+    codexStderrSummary("2026-08-12T05:16:29Z ERROR codex_models_manager::manager: failed to refresh available models: timeout waiting for child process to exit"),
+    "",
+  );
+  assert.equal(
     codexStderrSummary("warning\nerror: unexpected argument '-a' found\nUsage: codex exec"),
     "error: unexpected argument '-a' found",
   );

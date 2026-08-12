@@ -6,8 +6,15 @@ import { careerOpsRoot, readMemory, findReportFile } from "@/lib/career-ops";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf } from "@/lib/pdf-render.mjs";
 import { acquireTrackerWrite, releaseTrackerWrite } from "@/lib/core/run-registry";
-import { parseCodexLine } from "@/lib/codex-stream.mjs";
+import { codexStderrSummary, parseCodexLine } from "@/lib/codex-stream.mjs";
 import { codexBillingMode } from "@/lib/codex-billing.mjs";
+import {
+  classifyEvaluationPersistence,
+  ensureEvaluationTracker,
+  evaluationTimeoutMs,
+  findPersistedEvaluation,
+  snapshotReportNames,
+} from "@/lib/evaluation-run.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -118,6 +125,20 @@ export async function POST(req: Request) {
 
   const today = new Date().toISOString().slice(0, 10);
 
+  // A fresh install may not have a tracker yet. Create it before any evaluator
+  // starts so every parallel merge resolves and locks the same canonical path.
+  // The exclusive create never overwrites an existing user tracker.
+  if (kind === "evaluate") {
+    try {
+      ensureEvaluationTracker(careerOpsRoot());
+    } catch (error) {
+      return new Response(
+        JSON.stringify({ error: `Could not initialize the application tracker: ${error instanceof Error ? error.message : String(error)}` }),
+        { status: 500, headers: { "Content-Type": "application/json" } },
+      );
+    }
+  }
+
   // Precompute deterministic scratch + final paths so the agent never chooses
   // its own filenames — the backend owns naming and, later, rendering (#2172).
   let pdfPaths: PdfPaths | undefined;
@@ -181,15 +202,8 @@ export async function POST(req: Request) {
   // For write-needing kinds, snapshot reports/ so we can verify the worker
   // actually persisted (non-Claude CLIs lack Write auth and silently no-op).
   const reportsDir = path.join(careerOpsRoot(), "reports");
-  const countReports = () => {
-    try {
-      return fs.readdirSync(reportsDir).filter((f) => f.endsWith(".md")).length;
-    } catch {
-      return 0;
-    }
-  };
   const persists = kind === "evaluate";
-  const reportsBefore = persists ? countReports() : 0;
+  const reportsBefore = persists ? snapshotReportNames(reportsDir) : new Set<string>();
   // Tracker-mutating runs hold a write token so a row delete can't race their merge
   // (tracker.mjs delete doesn't yet share a lock with merge-tracker — see run-registry).
   const writeToken = kind === "evaluate" || kind === "pdf" ? acquireTrackerWrite() : null;
@@ -220,6 +234,7 @@ export async function POST(req: Request) {
       let buf = "";
       let emittedText = false; // any assistant text delta → the CLI actually ran
       let sawError = false;
+      let runError: string | null = null;
       let lastTokens = 0; // per-run token cost from the Claude result event (#6) — local only
       let lastCostUsd: number | null = null;
       // pdf-mode's agent only tailors content now (rendering moved to the
@@ -231,7 +246,7 @@ export async function POST(req: Request) {
       // generate-pdf.mjs mid-render. 600s agent / ~200s render is ample —
       // a Chromium PDF render normally takes low tens of seconds even with a
       // cold Playwright launch.
-      const killMs = kind === "pdf" ? 600_000 : 285_000;
+      const killMs = evaluationTimeoutMs(kind);
       killer = setTimeout(() => {
         try { child.kill("SIGTERM"); } catch { /* ignore */ }
       }, killMs);
@@ -270,7 +285,9 @@ export async function POST(req: Request) {
                 send({ type: "text", text: ev.text });
               } else if (ev.type === "error") {
                 sawError = true;
-                send({ type: "error", msg: ev.msg });
+                // Reconcile the terminal error with on-disk artifacts at close.
+                // A turn can fail after its report and tracker merge completed.
+                runError ??= ev.msg;
               } else if (ev.type === "tokens") {
                 lastTokens = ev.tokens;
               }
@@ -304,11 +321,20 @@ export async function POST(req: Request) {
       });
       child.stderr.on("data", (d: Buffer) => {
         const s = d.toString();
-        // Widened: auth/login/quota failures are the most common real error and
-        // the old narrow regex missed them (silent false "success").
-        if (/error|denied|fatal|not found|unauthorized|forbidden|auth|login|credential|api[ -]?key|quota|rate limit|not authenticated/i.test(s)) {
+        // Codex routinely logs cache/model refresh failures to stderr and then
+        // completes successfully. Use its dedicated actionable-error filter;
+        // structured turn failures still arrive on stdout via parseCodexLine.
+        const actionable = isCodex
+          ? codexStderrSummary(s)
+          : /error|denied|fatal|not found|unauthorized|forbidden|auth|login|credential|api[ -]?key|quota|rate limit|not authenticated/i.test(s)
+            ? s.trim().slice(0, 200)
+            : "";
+        if (actionable) {
           sawError = true;
-          send({ type: "error", msg: s.trim().slice(0, 200) });
+          // Do not fail the browser immediately. The child may already have
+          // persisted a complete evaluation; the close-time honesty gate
+          // reconciles stderr, exit status, report, and tracker atomically.
+          runError ??= actionable;
         }
       });
       // Render + mark-tracker-ready live in pdf-render.mjs (plain, dependency-
@@ -363,6 +389,7 @@ export async function POST(req: Request) {
         // all is the same failure mode whether it was evaluating or tailoring
         // a PDF — one place for the condition/message pair instead of two.
         const noOutputError = (): string | null => {
+          if (!emittedText && runError) return runError;
           if (!emittedText && !sawError && !cleanExit) return "The AI tool exited with an error — is it installed and signed in?";
           if (!emittedText && !sawError) return "The AI tool produced no output — is it installed and signed in?";
           return null;
@@ -392,21 +419,35 @@ export async function POST(req: Request) {
           return close();
         }
 
-        const wroteReport = countReports() > reportsBefore;
-        // Honesty gate (#9): a green "done" with a parsed score requires a CLEAN exit,
-        // real output, AND (for evaluations) a report actually written. Anything else
-        // is surfaced — an errored run must never be banked as a confident score.
+        const persisted = persists
+          ? findPersistedEvaluation({ root: careerOpsRoot(), reportsBefore, input })
+          : { reportFile: null, score: null, trackerRecorded: false };
+        // Honesty gate (#9): an evaluation is complete only when this run's
+        // URL-matched report and its tracker row both exist. Once persistence
+        // is verified, a missing final prose line or late process error is a
+        // recoverable transport failure, not a failed evaluation.
         const baseErr = noOutputError();
-        if (baseErr) {
+        const evaluationResult = persists
+          ? classifyEvaluationPersistence({ persisted, cleanExit, sawError, baseError: baseErr, runError })
+          : null;
+        if (evaluationResult?.status === "error") {
+          send({ type: "error", msg: evaluationResult.message });
+        } else if (evaluationResult?.status === "recovered") {
+          // Persistence is the authoritative completion boundary. A worker may
+          // be terminated after report+merge but before its final prose line;
+          // recover the verdict from the canonical report instead of showing a
+          // false failure for work that is already safely recorded.
+          send({ type: "text", text: "⚠️ The worker ended after saving the evaluation; the report and tracker entry were verified.\n" });
+          if (persisted.score !== null) {
+            send({ type: "text", text: `VERDICT: ${persisted.score}/5 — Evaluation saved and verified\n` });
+          }
+          send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd, billing });
+        } else if (baseErr) {
           send({ type: "error", msg: baseErr });
-        } else if (persists && !wroteReport) {
-          // The worker ran but never wrote the report/tracker row (e.g. a CLI
-          // without file-write authorization) — surface it instead of a fake score.
-          send({ type: "error", msg: "This evaluation didn't save a report, so it's not in your tracker. Re-run it (Codex and Claude Code both persist reports when signed in)." });
         } else if (!cleanExit || sawError) {
           // Produced output (maybe even a report) but did NOT finish cleanly — flag it
           // instead of recording a confident score off a half-finished run.
-          send({ type: "error", msg: "This run hit an error before finishing, so it isn't recorded as a confident result — re-run it to verify." });
+          send({ type: "error", msg: runError ?? "This run hit an error before finishing, so it isn't recorded as a confident result — re-run it to verify." });
         } else {
           send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd, billing });
         }

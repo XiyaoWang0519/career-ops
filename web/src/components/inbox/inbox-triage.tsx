@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Undo2 } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
+import { useRuntime } from "@/components/runtime-provider";
+import { resolveClientCliId } from "@/lib/client-cli";
 import type { InboxJob } from "@/lib/career-ops";
 import type { AtsSource } from "@/lib/explore";
 import { ATS_SOURCES } from "@/lib/explore";
@@ -15,7 +17,6 @@ import { cn } from "@/lib/cn";
 
 const LEGACY_SHORTLIST_KEY = "career-ops:shortlist";
 const LEGACY_HIDDEN_KEY = "career-ops:hidden";
-const CONFIG_KEY = "career-ops:config";
 const BATCH = 20;
 
 // The inbox as a TRIAGE surface: Abundance → Triage → Shortlist → Opt-in Score.
@@ -24,7 +25,11 @@ const BATCH = 20;
 // role relevant — order is freshness with a single documented plug point.
 export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const { jobs, startJob } = useJobs();
+  const runtime = useRuntime();
   const router = useRouter();
+  // Same resolution as job-store / assistant: server-pinned CAREER_OPS_DEFAULT_CLI
+  // (e.g. codex from .env) OR Config localStorage — not localStorage alone.
+  const hasCli = !!resolveClientCliId(runtime.defaultCli);
 
   // facets
   const [within, setWithin] = useState<number | null>(null);
@@ -39,7 +44,6 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const [hidden, setHidden] = useState<string[]>([]);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [undo, setUndo] = useState<{ label: string; fn: () => void } | null>(null);
-  const [hasCli, setHasCli] = useState(false);
   const [syncError, setSyncError] = useState("");
 
   useEffect(() => {
@@ -52,8 +56,6 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         const skipped = localStorage.getItem(LEGACY_HIDDEN_KEY);
         if (saved) legacyShortlist = JSON.parse(saved);
         if (skipped) legacyHidden = JSON.parse(skipped);
-        const config = localStorage.getItem(CONFIG_KEY);
-        setHasCli(!!(config && JSON.parse(config).cliId));
       } catch {
         /* malformed legacy state or unavailable storage */
       }
