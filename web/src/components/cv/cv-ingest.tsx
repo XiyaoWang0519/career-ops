@@ -24,9 +24,10 @@ async function cliId(): Promise<string | null> {
 }
 
 const STYLE = `
-.co-cvdrop{position:relative;border:1.5px dashed color-mix(in srgb, var(--fg) 22%, transparent);border-radius:1rem;transition:border-color .2s,background .2s}
+.co-cvdrop{position:relative;border:1.5px dashed color-mix(in srgb, var(--fg) 22%, transparent);border-radius:1rem;transition:border-color var(--duration-fast),background var(--duration-fast)}
 .co-cvdrop[data-over="true"]{border-color:hsl(26 73% 51%);background:hsl(26 73% 51% /.05)}
-.co-cvtrace{animation:co-rise .4s ease both}
+@keyframes co-rise{from{opacity:0;transform:translateY(var(--distance-medium))}to{opacity:1;transform:translateY(0)}}
+.co-cvtrace{animation:co-rise var(--duration-slow) var(--ease-smooth-out) both}
 `;
 
 export function CvIngest({ onSaved }: { onSaved?: () => void }) {

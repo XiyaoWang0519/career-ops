@@ -10,16 +10,16 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 // Co-located UI animations (HMR-proof vs Tailwind v4's stale globals.css):
 // field cascade-in, per-field "just drafted" flash, skeleton shimmer, hero orb.
 const STYLE = `
-@keyframes co-rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-.co-rise{animation:co-rise .55s cubic-bezier(.22,1,.36,1) both}
+@keyframes co-rise{from{opacity:0;transform:translateY(var(--distance-medium))}to{opacity:1;transform:translateY(0)}}
+.co-rise{animation:co-rise var(--duration-very-slow) var(--ease-smooth-out) both}
 @keyframes co-flash{0%{box-shadow:0 0 0 0 hsl(26 82% 55% / 0)}22%{box-shadow:0 0 0 3px hsl(26 82% 55% / .38)}100%{box-shadow:0 0 0 0 hsl(26 82% 55% / 0)}}
-.co-flash{animation:co-flash 1.15s ease both;border-radius:.6rem}
+.co-flash{animation:co-flash 1.15s var(--ease-out) both;border-radius:.6rem}
 @keyframes co-shim{0%{background-position:-200% 0}100%{background-position:200% 0}}
-.co-skel{background:linear-gradient(90deg, color-mix(in srgb,var(--fg) 5%, transparent) 25%, color-mix(in srgb,var(--fg) 12%, transparent) 37%, color-mix(in srgb,var(--fg) 5%, transparent) 63%);background-size:200% 100%;animation:co-shim 1.6s linear infinite;border-radius:.5rem}
+.co-skel{background:linear-gradient(90deg, color-mix(in srgb,var(--fg) 5%, transparent) 25%, color-mix(in srgb,var(--fg) 12%, transparent) 37%, color-mix(in srgb,var(--fg) 5%, transparent) 63%);background-size:200% 100%;animation:co-shim 1.6s var(--ease-linear) infinite;border-radius:.5rem}
 @keyframes co-orb{0%,100%{transform:scale(1);opacity:.55}50%{transform:scale(1.35);opacity:.9}}
-.co-orb{animation:co-orb 2.4s ease-in-out infinite}
+.co-orb{animation:co-orb 2.4s var(--ease-in-out) infinite}
 @keyframes co-spin{to{transform:rotate(360deg)}}
-.co-ring{animation:co-spin 3s linear infinite}
+.co-ring{animation:co-spin 3s var(--ease-linear) infinite}
 @media (prefers-reduced-motion: reduce){.co-rise,.co-flash,.co-skel,.co-orb,.co-ring{animation:none}}
 `;
 
@@ -334,7 +334,7 @@ function PhaseRail({ phase }: { phase: number }) {
             </div>
             {i < steps.length - 1 && (
               <span className="relative h-px flex-1 overflow-hidden rounded bg-border">
-                <span className={cn("absolute inset-y-0 left-0 bg-brand transition-all duration-700", i < phase ? "w-full" : "w-0")} />
+                <span className={cn("absolute inset-y-0 left-0 bg-brand transition-all duration-very-slow", i < phase ? "w-full" : "w-0")} />
               </span>
             )}
           </Fragment>

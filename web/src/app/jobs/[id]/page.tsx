@@ -44,7 +44,7 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
 
       <section
         className={cn(
-          "dot-bg relative mt-5 min-h-[9.5rem] overflow-hidden rounded-2xl border px-6 py-7 transition-[background-color,border-color,box-shadow] duration-700 ease-out",
+          "dot-bg relative mt-5 min-h-[9.5rem] overflow-hidden rounded-2xl border px-6 py-7 transition-[background-color,border-color,box-shadow] duration-very-slow ease-smooth-out",
           running && "border-border bg-surface/40",
           done && "border-emerald-500/40 bg-emerald-500/[0.09] shadow-[inset_0_0_90px_-28px_rgba(16,185,129,0.55)]",
           errored && "border-red-400/35 bg-red-500/[0.06]",
@@ -54,13 +54,13 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         {done && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(16,185,129,0.12),transparent_50%)] transition-opacity duration-700 ease-out"
+            className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(16,185,129,0.12),transparent_50%)] transition-opacity duration-very-slow ease-smooth-out"
           />
         )}
         <div className="relative z-10">
           <p
             className={cn(
-              "flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] transition-colors duration-700",
+              "flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] transition-colors duration-very-slow",
               running && "text-brand-text",
               done && "text-emerald-700 dark:text-emerald-400",
               errored && "text-red-500",

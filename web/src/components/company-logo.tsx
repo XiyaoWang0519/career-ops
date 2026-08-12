@@ -66,7 +66,7 @@ export function CompanyLogo({
           referrerPolicy="no-referrer"
           onLoad={() => setLoaded(true)}
           onError={() => setFailed(true)}
-          className="absolute inset-0 h-full w-full bg-white object-contain transition-opacity duration-200"
+          className="absolute inset-0 h-full w-full bg-white object-contain transition-opacity duration-fast"
           style={{ opacity: loaded ? 1 : 0, padding: Math.max(1, Math.round(size * 0.1)) }}
         />
       )}

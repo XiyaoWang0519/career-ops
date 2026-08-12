@@ -181,7 +181,7 @@ export default function ChatPage() {
     <div className="flex h-[calc(100dvh-5rem)] min-h-0 bg-background md:h-screen">
       <aside
         className={cn(
-          "hidden shrink-0 overflow-hidden border-r border-border transition-[width,border-color] duration-200 motion-reduce:transition-none lg:block",
+          "hidden shrink-0 overflow-hidden border-r border-border transition-[width,border-color] duration-fast motion-reduce:transition-none lg:block",
           historyCollapsed ? "w-0 border-transparent" : "w-72",
         )}
         aria-hidden={historyCollapsed === true}

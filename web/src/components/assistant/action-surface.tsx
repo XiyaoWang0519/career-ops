@@ -81,7 +81,7 @@ function CompactButton({ className, ...props }: React.ButtonHTMLAttributes<HTMLB
     <button
       type="button"
       className={cn(
-        "inline-flex h-7 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-[background-color,transform] hover:bg-surface-hover active:scale-[0.97] disabled:pointer-events-none disabled:opacity-45",
+        "inline-flex h-7 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-[12px] font-medium text-foreground shadow-sm transition-[background-color,transform] hover:bg-surface-hover active:scale-medium disabled:pointer-events-none disabled:opacity-45",
         className,
       )}
       {...props}
@@ -183,7 +183,7 @@ function ExploreWidget({ path, onAction }: { path: string; onAction: WidgetActio
             aria-valuetext={`${progress.percent}% overall`}
           >
             <div
-              className="h-full rounded-full bg-brand transition-[width] duration-300 ease-out"
+              className="h-full rounded-full bg-brand transition-[width] duration-fast ease-smooth-out"
               style={{ width: `${progress.percent}%` }}
             />
           </div>

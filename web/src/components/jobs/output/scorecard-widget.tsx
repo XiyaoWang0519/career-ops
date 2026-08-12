@@ -29,7 +29,7 @@ function ScoreRing({ score, tone }: { score: number; tone: keyof typeof SCORE_RI
           cy="32"
           r={r}
           fill="none"
-          className={cn(colors.stroke, "transition-[stroke-dasharray] duration-700 ease-out")}
+          className={cn(colors.stroke, "transition-[stroke-dasharray] duration-very-slow ease-smooth-out")}
           strokeWidth="3.5"
           strokeLinecap="round"
           strokeDasharray={`${dash} ${c}`}
@@ -132,7 +132,7 @@ export function ScorecardWidget({
     "bg-gradient-to-br to-transparent",
     wash,
     href &&
-      "transition-[border-color,transform] duration-200 hover:-translate-y-px hover:border-brand/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40",
+      "transition-[border-color,transform] duration-fast hover:-translate-y-px hover:border-brand/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40",
   );
 
   if (href) {

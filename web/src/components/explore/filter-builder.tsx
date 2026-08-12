@@ -15,7 +15,7 @@ const RECENCY = [
 
 const STYLE = `
 .co-fb__chip{display:inline-flex;align-items:center;gap:.3rem;border-radius:999px;padding:.2rem .5rem .2rem .6rem;font-size:12.5px;line-height:1.2;border:1px solid transparent}
-.co-fb__chip button{display:inline-flex;opacity:.6;transition:opacity .15s}
+.co-fb__chip button{display:inline-flex;opacity:.6;transition:opacity var(--duration-quick)}
 .co-fb__chip button:hover{opacity:1}
 .co-fb__chip.inc{color:hsl(26 78% 42%);background:hsl(26 73% 51% / .11);border-color:hsl(26 73% 51% / .26)}
 html.dark .co-fb__chip.inc{color:hsl(26 86% 70%);background:hsl(26 80% 55% / .14);border-color:hsl(26 80% 55% / .28)}

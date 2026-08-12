@@ -25,11 +25,11 @@ const STYLE = `
    on iOS, esp. dark). Top padding = the notch inset PLUS a comfortable base, so
    the title never sits flush/cramped at the top (env() is 0 in browser mode). */
 .co-mnav{position:sticky;top:0;z-index:30;background:var(--bg);padding-top:calc(env(safe-area-inset-top) + .8rem)}
-.co-mscrim{position:fixed;inset:0;z-index:60;background:rgba(8,8,12,.45);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .3s ease}
+.co-mscrim{position:fixed;inset:0;z-index:60;background:rgba(8,8,12,.45);-webkit-backdrop-filter:blur(var(--blur-small));backdrop-filter:blur(var(--blur-small));opacity:0;pointer-events:none;transition:opacity var(--duration-fast) var(--ease-smooth-out)}
 .co-mscrim.open{opacity:1;pointer-events:auto}
 .co-mdrawer{position:fixed;top:0;right:0;bottom:0;z-index:61;width:min(20rem,86vw);display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;box-shadow:-16px 0 48px -16px rgba(0,0,0,.4);padding-top:calc(env(safe-area-inset-top) + .25rem)}
 .co-msafe{padding-bottom:calc(1rem + env(safe-area-inset-bottom))}
-.co-pulse{animation:co-pulse 1.6s ease-in-out infinite}
+.co-pulse{animation:co-pulse 1.6s var(--ease-in-out) infinite}
 @keyframes co-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media(prefers-reduced-motion:reduce){.co-mscrim{transition:none}.co-pulse{animation:none}}
 `;
@@ -112,7 +112,7 @@ export function MobileNav() {
           <span className={`${instrumentSerif.className} relative -top-px text-xl text-landing`}>career-ops</span>
         </Link>
         <div className="ml-auto flex items-center gap-0.5">
-          <ThemeToggle className="duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]" />
+          <ThemeToggle className="duration-quick ease-smooth-out" />
           <button
             type="button"
             onClick={() => setOpen(true)}

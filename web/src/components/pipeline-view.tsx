@@ -344,7 +344,7 @@ function InboxEmpty({ count, filtered }: { count: number; filtered: boolean }) {
             <p className="mx-auto mt-2 max-w-sm text-sm text-muted">Find roles that match your CV — free, no tokens spent.</p>
             <Link
               href="/explore?run=1"
-              className="mt-5 inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground shadow-sm transition-all duration-200 hover:bg-brand-200 hover:-translate-y-0.5 hover:shadow-md"
+              className="mt-5 inline-flex items-center gap-2 rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-brand-foreground shadow-sm transition-all duration-fast hover:bg-brand-200 hover:-translate-y-0.5 hover:shadow-md"
             >
               <Compass className="size-4" /> Run your first free scan <ArrowRight className="size-4" />
             </Link>

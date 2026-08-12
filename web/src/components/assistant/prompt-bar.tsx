@@ -382,7 +382,7 @@ export function PromptBar({
         <div
           onMouseLeave={() => setEngaged(false)}
           className="absolute inset-x-0 bottom-full z-10 mb-2 rounded-[10px] border border-border bg-surface p-1 shadow-lg shadow-black/[0.06]"
-          style={{ animation: "prompt-bar-pop-in 180ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "bottom center" }}
+          style={{ animation: "prompt-bar-pop-in var(--duration-quick) var(--ease-smooth-out) both", transformOrigin: "bottom center" }}
         >
           <span
             aria-hidden
@@ -392,7 +392,7 @@ export function PromptBar({
               height: rowBox?.height ?? 0,
               opacity: rowBox && engaged && rows.length > 0 ? 1 : 0,
               transition:
-                "top 220ms cubic-bezier(0.23,1,0.32,1), height 220ms cubic-bezier(0.23,1,0.32,1), opacity 150ms ease",
+                "top var(--duration-fast) var(--ease-smooth-out), height var(--duration-fast) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-out)",
             }}
           />
           {rows.map((row, i) => {
@@ -435,7 +435,7 @@ export function PromptBar({
         <div
           onMouseLeave={() => setModelHovered(null)}
           className="absolute right-0 bottom-full z-10 mb-2 w-48 rounded-[10px] border border-border bg-surface p-1 shadow-lg shadow-black/[0.06]"
-          style={{ animation: "prompt-bar-pop-in 180ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "bottom right" }}
+          style={{ animation: "prompt-bar-pop-in var(--duration-quick) var(--ease-smooth-out) both", transformOrigin: "bottom right" }}
         >
           <span
             aria-hidden
@@ -445,7 +445,7 @@ export function PromptBar({
               height: modelBox?.height ?? 0,
               opacity: modelBox && modelHovered !== null ? 1 : 0,
               transition:
-                "top 220ms cubic-bezier(0.23,1,0.32,1), height 220ms cubic-bezier(0.23,1,0.32,1), opacity 150ms ease",
+                "top var(--duration-fast) var(--ease-smooth-out), height var(--duration-fast) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-out)",
             }}
           />
           {models.map((m, i) => (
@@ -477,7 +477,7 @@ export function PromptBar({
 
       <div
         className={cn(
-          "relative isolate flex flex-col gap-1.5 overflow-hidden border border-border bg-surface p-1.5 shadow-lg shadow-black/[0.03] transition-[border-color,border-radius] duration-150 focus-within:border-brand/40",
+          "relative isolate flex flex-col gap-1.5 overflow-hidden border border-border bg-surface p-1.5 shadow-lg shadow-black/[0.03] transition-[border-color,border-radius] duration-quick focus-within:border-brand/40",
           pill ? (attachments.length > 0 || expanded ? "rounded-[24px]" : "rounded-full") : "rounded-[14px]",
           disabled && "opacity-60",
         )}
@@ -505,7 +505,7 @@ export function PromptBar({
                   "flex h-6 items-center gap-1.5 border border-border bg-background py-1 pl-1.5 pr-1 text-[11.5px] text-muted",
                   pill ? "rounded-full" : "rounded-md",
                 )}
-                style={{ animation: "prompt-bar-pop-in 200ms cubic-bezier(0.23,1,0.32,1) both" }}
+                style={{ animation: "prompt-bar-pop-in var(--duration-fast) var(--ease-smooth-out) both" }}
               >
                 <Icon size={12}>{GLYPHS.file}</Icon>
                 <span className="max-w-36 truncate">{file}</span>
@@ -514,7 +514,7 @@ export function PromptBar({
                   aria-label={`Remove ${file}`}
                   onClick={() => setAttachments((current) => current.filter((_, j) => j !== i))}
                   className={cn(
-                    "flex size-4 items-center justify-center text-faint transition-colors duration-100 hover:bg-surface-hover hover:text-foreground",
+                    "flex size-4 items-center justify-center text-faint transition-colors duration-micro hover:bg-surface-hover hover:text-foreground",
                     pill ? "rounded-full" : "rounded-[4px]",
                   )}
                 >
@@ -551,7 +551,7 @@ export function PromptBar({
               inputRef.current?.focus();
             }}
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center justify-self-start text-faint transition-[background-color,color,transform] duration-150 hover:bg-surface-hover hover:text-foreground active:scale-[0.94] disabled:pointer-events-none",
+              "flex size-7 shrink-0 items-center justify-center justify-self-start text-faint transition-[background-color,color,transform] duration-quick hover:bg-surface-hover hover:text-foreground active:scale-large disabled:pointer-events-none",
               pill ? "rounded-full" : "rounded-[8px]",
               plusOpen && "bg-surface-hover text-foreground",
               expanded ? "col-start-1 row-start-2" : "col-start-1 row-start-1",
@@ -616,7 +616,7 @@ export function PromptBar({
                 setModelOpen((current) => !current);
               }}
               className={cn(
-                "flex h-7 shrink-0 items-center gap-1 px-1.5 text-[12px] font-medium text-muted transition-colors duration-150 hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none",
+                "flex h-7 shrink-0 items-center gap-1 px-1.5 text-[12px] font-medium text-muted transition-colors duration-quick hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none",
                 pill ? "rounded-full" : "rounded-[8px]",
                 expanded ? "col-start-2 row-start-2" : "col-start-3 row-start-1",
               )}
@@ -637,7 +637,7 @@ export function PromptBar({
             disabled={disabled}
             onClick={() => setListening((current) => !current)}
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] disabled:pointer-events-none",
+              "flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-quick active:scale-large disabled:pointer-events-none",
               pill ? "rounded-full" : "rounded-[8px]",
               listening ? "bg-brand-soft text-brand-text" : "text-faint hover:bg-surface-hover hover:text-foreground",
               expanded
@@ -655,7 +655,7 @@ export function PromptBar({
                   <span
                     key={i}
                     className="w-[2.5px] rounded-full bg-current"
-                    style={{ height: "100%", animation: `prompt-bar-eq-bounce 900ms ease-in-out ${i * 150}ms infinite` }}
+                    style={{ height: "100%", animation: `prompt-bar-eq-bounce 900ms var(--ease-in-out) calc(${i} * var(--duration-stagger)) infinite` }}
                   />
                 ))}
               </span>
@@ -675,7 +675,7 @@ export function PromptBar({
             disabled={!canSend}
             onClick={send}
             className={cn(
-              "flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]",
+              "flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-fast enabled:active:scale-large",
               pill ? "rounded-full" : "rounded-[8px]",
               expanded
                 ? showModelPicker

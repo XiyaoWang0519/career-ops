@@ -262,7 +262,7 @@ function TraceStep({
         {expandable && (
           <span
             className={cn(
-              "inline-flex shrink-0 text-faint transition-transform duration-200",
+              "inline-flex shrink-0 text-faint transition-transform duration-fast",
               expanded && "scale-y-[-1]",
             )}
           >
@@ -362,7 +362,7 @@ export function WorkerReasoningTrace({ job }: { job: Job }) {
               </span>
             )}
           </span>
-          <span className={cn("inline-flex shrink-0 transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)]", open && "scale-y-[-1]")}>
+          <span className={cn("inline-flex shrink-0 transition-transform duration-fast ease-smooth-out", open && "scale-y-[-1]")}>
             <ChevronDown className="size-4 text-muted" />
           </span>
         </button>
