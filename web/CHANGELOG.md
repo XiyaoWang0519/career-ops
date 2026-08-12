@@ -9,6 +9,22 @@
 * **web:** server-pinned default AI tool (`CAREER_OPS_DEFAULT_CLI`), simple-mode nav (`CAREER_OPS_SIMPLE`), Activity in sidebar with persisted run logs
 * **web:** friend-ready hosting docs (Tailscale / tunnel + dedicated `CAREER_OPS_ROOT` checkout); hide Apply for remote clients
 
+## [0.7.0](https://github.com/XiyaoWang0519/career-ops/compare/web-v0.6.0...web-v0.7.0) (2026-08-12)
+
+
+### Features
+
+* **web:** add select all control to inbox triage ([9f3f2ba](https://github.com/XiyaoWang0519/career-ops/commit/9f3f2baca3d498bd1c915c674520a66f4ed2818a))
+* **web:** friend-ready frontend with Codex backend and password auth ([#1](https://github.com/XiyaoWang0519/career-ops/issues/1)) ([8e45b2c](https://github.com/XiyaoWang0519/career-ops/commit/8e45b2c8e50c8a07e95268881765f0a8423c37c3))
+* **web:** make the assistant a full-page chat surface at /chat ([#2](https://github.com/XiyaoWang0519/career-ops/issues/2)) ([daf0922](https://github.com/XiyaoWang0519/career-ops/commit/daf0922f3856414923be9f729b084e6c7238f7fc))
+
+
+### Bug Fixes
+
+* **web:** re-read states.yml when it changes instead of caching it for the process lifetime ([#2590](https://github.com/XiyaoWang0519/career-ops/issues/2590)) ([2a2e09e](https://github.com/XiyaoWang0519/career-ops/commit/2a2e09e61275e18a2331c1fee39bec3225f9f01c))
+* **web:** route Today's "See all N" link to the fresh-matches view ([#1790](https://github.com/XiyaoWang0519/career-ops/issues/1790)) ([5fcc727](https://github.com/XiyaoWang0519/career-ops/commit/5fcc72773b711be59f8212536df27ea6fd79f88d))
+* **web:** show real Codex plan usage in the sidebar meter ([e7a7213](https://github.com/XiyaoWang0519/career-ops/commit/e7a72137bcdd311ba1efe5a50421d66b4e79ad7f))
+
 ## [0.6.0](https://github.com/santifer/career-ops/compare/web-v0.5.0...web-v0.6.0) (2026-08-04)
 
 
