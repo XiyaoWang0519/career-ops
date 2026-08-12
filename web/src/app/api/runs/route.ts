@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { careerOpsRoot } from "@/lib/career-ops";
 import { parseRunCost } from "@/lib/run-cost.mjs";
+import { parseArtifactsFromLog } from "@/lib/job-artifacts.mjs";
+import type { JobArtifact } from "@/lib/job-artifacts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +20,7 @@ type PersistedJob = {
   steps: { kind: "tool" | "status"; label: string; ts: number }[];
   text: string;
   result?: { score: number | null; summary: string; tone: "good" | "warn" | "bad" | "muted" };
+  artifacts?: JobArtifact[];
   cost?: { tokens: number; usd?: number; billing?: "plan" | "metered" | "unknown" };
   startedAt: number;
   endedAt?: number;
@@ -53,6 +56,8 @@ function parseRunMd(id: string, md: string, mtimeMs: number): PersistedJob {
     });
 
   const output = (md.split("## Output\n")[1] || "").trim();
+  const artifactsRaw = parseArtifactsFromLog(md);
+  const artifacts = artifactsRaw?.length ? (artifactsRaw as JobArtifact[]) : undefined;
 
   return {
     id,
@@ -65,6 +70,7 @@ function parseRunMd(id: string, md: string, mtimeMs: number): PersistedJob {
     steps,
     text: output.slice(-8000),
     result: score != null || summary ? { score, summary, tone: toneFor(score) } : undefined,
+    artifacts,
     cost: parseRunCost(md),
     startedAt: mtimeMs,
     endedAt: mtimeMs,

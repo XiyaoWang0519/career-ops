@@ -120,3 +120,10 @@ export function classifyEvaluationPersistence({ persisted, cleanExit, sawError, 
   if (!cleanExit || sawError || baseError) return { status: "recovered" };
   return { status: "complete" };
 }
+
+/** A verified evaluation has completed the inbox's review step. Recovered
+ * runs count because their report and tracker row were both verified; failed
+ * or incomplete runs stay pending so the user can retry them. */
+export function shouldRetireEvaluatedInboxItem(evaluationResult) {
+  return evaluationResult?.status === "complete" || evaluationResult?.status === "recovered";
+}

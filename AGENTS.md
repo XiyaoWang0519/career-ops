@@ -417,3 +417,12 @@ One TSV file per evaluation at `batch/tracker-additions/{num}-{company-slug}.tsv
 - No markdown bold (`**`) in status field
 - No dates in status field (use the date column)
 - No extra text (use the notes column)
+
+## Learned User Preferences
+
+- Keep Opportunity report markdown readable: render STAR+R as stacked story cards instead of crushed wide tables; avoid overlapping field/assessment column text.
+- On worker Activity (`/jobs/[id]`), use the `/chat` reasoning-trace pattern: persistent collapsible step list, orb on the live step only; keep the hero and animate it green when the job completes.
+
+## Learned Workspace Facts
+
+- Web AI flows (including Shortlist scoring) must use the shared server runtime CLI resolver (`/api/runtime` / `CAREER_OPS_DEFAULT_CLI`), not browser `localStorage` alone.

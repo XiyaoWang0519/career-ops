@@ -58,10 +58,28 @@ function toolFamily(item) {
  * @param {Record<string, unknown>} item
  * @returns {string | undefined}
  */
+function fileChangePaths(item) {
+  if (!Array.isArray(item?.changes)) return [];
+  /** @type {string[]} */
+  const paths = [];
+  for (const change of item.changes) {
+    if (!change || typeof change !== "object") continue;
+    const record = /** @type {Record<string, unknown>} */ (change);
+    const path =
+      (typeof record.path === "string" && record.path) ||
+      (typeof record.filename === "string" && record.filename) ||
+      (typeof record.file === "string" && record.file) ||
+      "";
+    if (path) paths.push(path);
+  }
+  return [...new Set(paths)];
+}
+
 function toolDetail(item) {
   let detail = "";
   if (item?.type === "command_execution" && typeof item.command === "string") detail = item.command;
   else if (item?.type === "web_search" && typeof item.query === "string") detail = item.query;
+  else if (item?.type === "file_change") detail = fileChangePaths(item).slice(0, 6).join(", ");
   else if (item?.type === "mcp_tool_call") {
     if (typeof item.server === "string" && typeof item.tool === "string") detail = `${item.server}.${item.tool}`;
     else if (typeof item.tool === "string") detail = item.tool;

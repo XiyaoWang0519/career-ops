@@ -9,6 +9,7 @@ import {
   ensureEvaluationTracker,
   evaluationTimeoutMs,
   findPersistedEvaluation,
+  shouldRetireEvaluatedInboxItem,
   snapshotReportNames,
 } from "../../src/lib/evaluation-run.mjs";
 
@@ -131,4 +132,11 @@ test("an actionable tool error is preserved when no report was written", () => {
     }),
     { status: "error", message: "Authentication required: run codex login" },
   );
+});
+
+test("only verified evaluations retire their inbox item", () => {
+  assert.equal(shouldRetireEvaluatedInboxItem({ status: "complete" }), true);
+  assert.equal(shouldRetireEvaluatedInboxItem({ status: "recovered" }), true);
+  assert.equal(shouldRetireEvaluatedInboxItem({ status: "error" }), false);
+  assert.equal(shouldRetireEvaluatedInboxItem(null), false);
 });

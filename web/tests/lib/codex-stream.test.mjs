@@ -71,14 +71,44 @@ test("Codex commentary becomes a reasoning summary and final answers remain visi
   ]);
 });
 
-test("file_change item.completed → Edit tool", () => {
+test("file_change item.completed → Edit tool with paths", () => {
   const evs = parseCodexLine(
     JSON.stringify({
       type: "item.completed",
-      item: { id: "item_2", type: "file_change", changes: [] },
+      item: {
+        id: "item_2",
+        type: "file_change",
+        changes: [{ path: "reports/001-acme.md" }, { path: "data/applications.md" }],
+      },
     }),
   );
-  assert.deepEqual(evs, [{ type: "tool", id: "item_2", name: "Edit", family: "file_change" }]);
+  assert.deepEqual(evs, [
+    {
+      type: "tool",
+      id: "item_2",
+      name: "Edit",
+      family: "file_change",
+      detail: "reports/001-acme.md, data/applications.md",
+    },
+  ]);
+});
+
+test("web_search item.started → query detail", () => {
+  const evs = parseCodexLine(
+    JSON.stringify({
+      type: "item.started",
+      item: { id: "item_search", type: "web_search", query: "Autodesk MLOps salary band" },
+    }),
+  );
+  assert.deepEqual(evs, [
+    {
+      type: "tool",
+      id: "item_search",
+      name: "WebSearch",
+      family: "web_search",
+      detail: "Autodesk MLOps salary band",
+    },
+  ]);
 });
 
 test("reasoning items expose summaries but never raw reasoning", () => {

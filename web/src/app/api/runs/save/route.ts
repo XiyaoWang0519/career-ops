@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { careerOpsRoot } from "@/lib/career-ops";
 import { formatRunCost } from "@/lib/run-cost.mjs";
+import { serializeArtifactsForLog } from "@/lib/job-artifacts.mjs";
+import type { JobArtifact } from "@/lib/job-artifacts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +20,7 @@ type Body = {
   cost?: { tokens: number; usd?: number; billing?: "plan" | "metered" | "unknown" };
   steps?: { kind: string; label: string }[];
   output?: string;
+  artifacts?: JobArtifact[];
 };
 
 // Persist a finished worker's log as markdown under a web-managed dir so the CLI
@@ -40,6 +43,7 @@ export async function POST(req: Request) {
   const safeId = String(b.id).replace(/[^a-z0-9_-]/gi, "");
   const steps = (b.steps ?? []).map((s) => `- ${s.kind === "tool" ? `🔧 ${s.label}` : s.label}`).join("\n");
   const verdict = b.result?.score != null ? `${b.result.score}/5 — ${b.result.summary || ""}` : "—";
+  const artifactsJson = serializeArtifactsForLog(b.artifacts) || "-";
   const md = `# Web run · ${b.title || b.id}
 
 - id: ${b.id}
@@ -48,6 +52,7 @@ export async function POST(req: Request) {
 - page: ${b.page || "-"}
 - input: ${b.input || "-"}
 - verdict: ${verdict}
+- artifacts: ${artifactsJson}
 ${formatRunCost(b.cost)}
 
 ## Steps

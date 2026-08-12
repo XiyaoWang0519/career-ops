@@ -2,14 +2,15 @@
 
 import { use } from "react";
 import Link from "next/link";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { ArrowLeft, Loader2, Wrench, CircleDot, Check, X } from "lucide-react";
+import { ArrowLeft, Check, Loader2, X } from "lucide-react";
 import { useJobs } from "@/components/jobs/job-store";
+import { WorkerReasoningTrace } from "@/components/jobs/worker-reasoning-trace";
+import { JobOutputShowcase } from "@/components/jobs/output/job-output-showcase";
 import { usePipeline } from "@/components/pipeline/pipeline-provider";
 import { HeroGlow } from "@/components/hero-glow";
 import { Badge } from "@/components/ui/badge";
 import { relatedApplicationForJob } from "@/lib/opportunity";
+import { cn } from "@/lib/cn";
 
 export default function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -25,11 +26,15 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
           <ArrowLeft className="size-4" /> Activity
         </Link>
         <p className="mt-8 text-sm text-muted">
-          This worker is no longer in memory (it finished earlier or the page was reloaded).
+          This worker is no longer available (it finished earlier, or the server was restarted).
         </p>
       </div>
     );
   }
+
+  const done = job.status === "done";
+  const errored = job.status === "error";
+  const running = job.status === "running";
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
@@ -37,13 +42,33 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         <ArrowLeft className="size-4" /> {related ? `${related.company} opportunity` : "Activity"}
       </Link>
 
-      <section className="dot-bg relative mt-5 overflow-hidden rounded-2xl border border-border bg-surface/40 px-6 py-7">
-        {job.status === "running" && <HeroGlow />}
+      <section
+        className={cn(
+          "dot-bg relative mt-5 min-h-[9.5rem] overflow-hidden rounded-2xl border px-6 py-7 transition-[background-color,border-color,box-shadow] duration-700 ease-out",
+          running && "border-border bg-surface/40",
+          done && "border-emerald-500/40 bg-emerald-500/[0.09] shadow-[inset_0_0_90px_-28px_rgba(16,185,129,0.55)]",
+          errored && "border-red-400/35 bg-red-500/[0.06]",
+        )}
+      >
+        {running && <HeroGlow />}
+        {done && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_top_left,rgba(16,185,129,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(16,185,129,0.12),transparent_50%)] transition-opacity duration-700 ease-out"
+          />
+        )}
         <div className="relative z-10">
-          <p className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-faint">
-            {job.status === "running" ? (
+          <p
+            className={cn(
+              "flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] transition-colors duration-700",
+              running && "text-brand-text",
+              done && "text-emerald-700 dark:text-emerald-400",
+              errored && "text-red-500",
+            )}
+          >
+            {running ? (
               <><Loader2 className="size-3 animate-spin text-brand" /> working</>
-            ) : job.status === "done" ? (
+            ) : done ? (
               <><Check className="size-3 text-emerald-500" /> done</>
             ) : (
               <><X className="size-3 text-red-400" /> error</>
@@ -60,34 +85,9 @@ export default function JobPage({ params }: { params: Promise<{ id: string }> })
         </div>
       </section>
 
-      <ol className="mt-6 space-y-2">
-        {job.steps.map((s, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-sm">
-            {s.kind === "tool" ? (
-              <Wrench className="mt-0.5 size-3.5 shrink-0 text-brand" />
-            ) : (
-              <CircleDot className="mt-0.5 size-3.5 shrink-0 text-faint" />
-            )}
-            <span className={s.kind === "tool" ? "font-medium" : "text-muted"}>
-              {s.kind === "tool" ? `Using ${s.label}` : s.label}
-            </span>
-          </li>
-        ))}
-        {job.status === "running" && (
-          <li className="flex items-center gap-2.5 text-sm text-muted">
-            <Loader2 className="size-3.5 animate-spin text-brand" /> thinking…
-          </li>
-        )}
-      </ol>
+      <WorkerReasoningTrace job={job} />
 
-      {job.text && (
-        <div className="mt-8">
-          <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Output</h2>
-          <div className="report-prose mt-3 rounded-2xl border border-border bg-surface/40 p-5">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{job.text}</ReactMarkdown>
-          </div>
-        </div>
-      )}
+      <JobOutputShowcase job={job} related={related} />
     </div>
   );
 }
